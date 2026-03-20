@@ -4,7 +4,7 @@ import platform
 import shutil
 import socket
 from gui.theme import *
-from utils import system_check
+from utils import system_check, drive_selector
 
 class ScreenRequirements(ctk.CTkFrame):
     def __init__(self, master, on_next, on_prev, **kwargs):
@@ -46,7 +46,7 @@ class ScreenRequirements(ctk.CTkFrame):
             ("python", "Python 3.11+"),
             ("git", "Git"),
             ("ram", "8GB RAM Minimum"),
-            ("disk", "20GB Free Disk Space"),
+            ("disk", "Sufficient storage found"),
             ("internet", "Internet Connectivity")
         ]
         if platform.system() == "Windows":
@@ -109,7 +109,8 @@ class ScreenRequirements(ctk.CTkFrame):
         btn = self.items[key]["btn"]
         if passed:
             status_lbl.configure(text=text, text_color=SUCCESS_COLOR)
-            btn.pack_forget()
+            if btn.winfo_exists():
+                btn.pack_forget()
         else:
             status_lbl.configure(text="❌ Missing", text_color=ERROR_COLOR)
             btn.pack(side="right", padx=10)
@@ -140,13 +141,15 @@ class ScreenRequirements(ctk.CTkFrame):
         except OSError:
             pass
 
-        # 2. Disk Space Check (20GB)
-        disk_ok = False
-        try:
-            total, used, free = shutil.disk_usage("/")
-            disk_ok = (free / (1024**3)) >= 20.0
-        except Exception:
-            disk_ok = True # Fallback if check fails
+        # 2. Relaxed Disk Space Check
+        # Requirement: Check for at least 5GB free on ANY mounted drive
+        # Only block if literally no drive has more than 2GB free
+        drives = drive_selector.get_mounted_drives()
+        disk_ok = any(d["free_gb"] >= 5.0 for d in drives)
+        
+        # Absolute block if no drive has > 2GB
+        if not any(d["free_gb"] >= 2.0 for d in drives):
+            disk_ok = False
 
         results = {
             "docker": system_check.check_docker(),
