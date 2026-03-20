@@ -8,22 +8,29 @@ class DriveSelectorScreen(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent, fg_color=BG_COLOR)
         self.app = app
-        self.selected_path = None
+        
+        # Initialize ALL variables first before anything else
         self.selected_drive = None
-        self.drive_cards = []
+        self.selected_path = None
+        self.path_var = ctk.StringVar(value="")
+        self.install_path_var = ctk.StringVar(value="")
+        self.drive_cards = {} # Using dict as requested
+        self.drives = []
+        
+        # NOW build the UI
+        self.build_ui()
+        self.populate_drives()
 
+    def build_ui(self):
         self.title = ctk.CTkLabel(self, text="Select Installation Directory", font=FONT_HEADING, text_color=TEXT_COLOR)
         self.title.pack(pady=(20, 10))
 
         self.drives_frame = ctk.CTkScrollableFrame(self, fg_color=PANEL_BG, height=200)
         self.drives_frame.pack(pady=10, padx=20, fill="x")
 
-        self.populate_drives()
-
         self.path_lbl = ctk.CTkLabel(self, text="Install Path:", font=FONT_MAIN, text_color=MUTED_TEXT)
         self.path_lbl.pack(pady=(20, 0))
 
-        self.path_var = ctk.StringVar(value="Not selected")
         self.path_display = ctk.CTkEntry(self, textvariable=self.path_var, width=400, state="readonly", fg_color=BG_COLOR)
         self.path_display.pack(pady=5)
 
@@ -61,18 +68,19 @@ class DriveSelectorScreen(ctk.CTkFrame):
         self.app.load_screen("port")
 
     def populate_drives(self):
-        drives = drive_selector.get_mounted_drives()
-        if not drives:
+        self.drives = drive_selector.get_mounted_drives()
+        if not self.drives:
             ctk.CTkLabel(self.drives_frame, text="No drives found.", text_color=ERROR_COLOR).pack()
             return
 
-        best_drive = max(drives, key=lambda d: d["free_gb"])
+        best_drive = max(self.drives, key=lambda d: d["free_gb"])
 
-        for d in drives:
+        for d in self.drives:
+            mount = d['mountpoint']
             card = ctk.CTkFrame(self.drives_frame, fg_color=BG_COLOR, border_width=1, border_color=MUTED_TEXT, cursor="hand2")
             card.pack(fill="x", pady=5, padx=5)
             
-            text = f"Drive {d['mountpoint']} ({d['fstype']}) - {d['free_gb']}GB free of {d['total_gb']}GB"
+            text = f"Drive {mount} ({d['fstype']}) - {d['free_gb']}GB free of {d['total_gb']}GB"
             lbl = ctk.CTkLabel(card, text=text, font=FONT_MAIN, text_color=TEXT_COLOR)
             lbl.pack(side="left", padx=10, pady=10)
 
@@ -81,25 +89,32 @@ class DriveSelectorScreen(ctk.CTkFrame):
                 badge.pack(side="right", padx=10)
 
             for widget in [card, lbl]:
-                widget.bind("<Button-1>", lambda e, d=d, c=card: self.select_drive(d, c))
-            if d == best_drive:
-                for widget in card.winfo_children():
-                    if isinstance(widget, ctk.CTkLabel):
-                        widget.bind("<Button-1>", lambda e, d=d, c=card: self.select_drive(d, c))
+                widget.bind("<Button-1>", lambda e, drive=d: self.select_drive(drive))
+                
+            # If there's a badge, bind it too
+            for widget in card.winfo_children():
+                if isinstance(widget, ctk.CTkLabel):
+                    widget.bind("<Button-1>", lambda e, drive=d: self.select_drive(drive))
 
-            self.drive_cards.append((card, d))
+            self.drive_cards[mount] = card
 
-        self.select_drive(best_drive, self.drive_cards[0][0])
+        self.select_drive(best_drive)
 
-    def select_drive(self, drive_info, card_widget):
+    def select_drive(self, drive_info):
         self.selected_drive = drive_info
-        for card, info in self.drive_cards:
-            if card == card_widget:
+        mount = drive_info['mountpoint']
+        
+        # Update highlighting
+        for m, card in self.drive_cards.items():
+            if m == mount:
                 card.configure(border_color=ACCENT_COLOR, border_width=2)
             else:
                 card.configure(border_color=MUTED_TEXT, border_width=1)
-        self.selected_path = Path(drive_info["mountpoint"]) / "OpenClaw"
+        
+        self.selected_path = Path(mount) / "OpenClaw"
         self.path_var.set(str(self.selected_path))
+        self.install_path_var.set(str(self.selected_path)) # Sync both as requested
+        
         self.validate_space(drive_info["free_gb"])
 
     def validate_space(self, free_gb):
@@ -120,6 +135,7 @@ class DriveSelectorScreen(ctk.CTkFrame):
             path = Path(folder)
             self.selected_path = path / "OpenClaw"
             self.path_var.set(str(self.selected_path))
+            self.install_path_var.set(str(self.selected_path))
             try:
                 import shutil
                 usage = shutil.disk_usage(folder)
