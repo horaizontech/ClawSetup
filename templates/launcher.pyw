@@ -30,8 +30,11 @@ if env_path.exists():
                 key, val = line.split("=", 1)
                 env_vars[key] = val
 
-PORT = env_vars.get("OPENCLAW_PORT", "3000")
+PORT = env_vars.get("OPENCLAW_PORT", "18789")
+TOKEN = env_vars.get("GATEWAY_TOKEN", "")
 DASHBOARD_URL = f"http://localhost:{PORT}"
+if TOKEN:
+    DASHBOARD_URL += f"/?token={TOKEN}"
 
 def create_icon_image():
     """Creates a simple placeholder icon for the system tray."""
@@ -103,8 +106,6 @@ def main():
         icon = pystray.Icon("OpenClaw", image, "OpenClaw AI Agent", menu)
         icon.run()
     else:
-        # If no tray, just keep the script alive or exit
-        # Since it's a background service, we can just exit and let docker run
         sys.exit(0)
 
 if __name__ == "__main__":

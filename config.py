@@ -3,7 +3,9 @@ from pathlib import Path
 
 APP_NAME = "ClawSetup"
 VERSION = "v1.0.0"
-OPENCLAW_IMAGE = "openhands/openclaw:latest"
+OPENCLAW_IMAGE = "alpine/openclaw:latest"
+OPENCLAW_DEFAULT_PORT = 18789
+OPENCLAW_DASHBOARD_PATH = "/"
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent

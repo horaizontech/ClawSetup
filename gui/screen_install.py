@@ -7,6 +7,8 @@ import shutil
 import platform
 import subprocess
 import requests
+import secrets
+import json
 from pathlib import Path
 from gui.theme import *
 from config import BASE_DIR, OPENCLAW_IMAGE
@@ -39,7 +41,6 @@ class InstallScreen(ctk.CTkFrame):
         self.btn_finish.pack(side="left", padx=10)
         
         self.btn_retry = ctk.CTkButton(self.btn_frame, text="Retry", command=self.start_install, fg_color=ACCENT_COLOR, text_color=BG_COLOR)
-        # Hidden by default
         
         self.after(1000, self.start_install)
 
@@ -61,16 +62,19 @@ class InstallScreen(ctk.CTkFrame):
     def _do_install(self):
         from utils import docker_manager, shortcut_creator, health_check
         from main import INSTALL_STATE_FILE
-        import json
 
         try:
             data = self.app.install_data
             install_dir = Path(data.get("install_dir", "."))
-            port = data.get("port", 3000)
+            port = data.get("port", 18789)
             models = data.get("models", [])
             agents = data.get("agents", [])
+            
+            # Generate security token
+            gateway_token = secrets.token_urlsafe(32)
+            self.app.install_data["gateway_token"] = gateway_token
 
-            # 1. Ensure Docker is running (v. critical)
+            # 1. Ensure Docker is running
             if not docker_manager.ensure_docker_running(log_callback=self.log):
                 self.log("ERROR: Installation halted. Docker must be running to proceed.")
                 self.after(0, self.show_retry)
@@ -80,21 +84,34 @@ class InstallScreen(ctk.CTkFrame):
             # 2. Directories
             self.log(f"Creating directory structure at {install_dir}...")
             install_dir.mkdir(parents=True, exist_ok=True)
-            for d in ["workspace", "agents", "logs", "assets"]: (install_dir / d).mkdir(exist_ok=True)
+            for d in ["workspace", "agents", "logs", "assets", ".openclaw"]: (install_dir / d).mkdir(exist_ok=True)
             self.progress.set(0.2)
 
             # 3. Templates & Env
             self.log("Setting up configuration...")
             template_dir = BASE_DIR / "templates"
             for f_name in ["docker-compose.yml", "launcher.pyw", "telegram_notifier.py"]:
-                if (template_dir / f_name).exists(): shutil.copy(template_dir / f_name, install_dir / f_name)
+                if (template_dir / f_name).exists(): 
+                    shutil.copy(template_dir / f_name, install_dir / f_name)
             
-            env_content = f"WORKSPACE_BASE={install_dir / 'workspace'}\nOPENCLAW_PORT={port}\nOPENCLAW_IMAGE={OPENCLAW_IMAGE}\nOLLAMA_API_URL=http://127.0.0.1:11434/api\nDEFAULT_AGENT={agents[0] if agents else 'FullStack Dev'}\nDEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}\n"
+            # Write standardized .env
+            env_content = f"""OPENCLAW_PORT={port}
+GATEWAY_TOKEN={gateway_token}
+INSTALL_DIR={install_dir}
+OLLAMA_MODEL={models[0] if models else 'llama3.2:8b'}
+TELEGRAM_TOKEN={data.get('telegram_token', '')}
+TELEGRAM_CHAT_ID={data.get('telegram_chat_id', '')}
+WORKSPACE_BASE={install_dir / 'workspace'}
+OPENCLAW_IMAGE={OPENCLAW_IMAGE}
+OLLAMA_API_URL=http://127.0.0.1:11434/api
+DEFAULT_AGENT={agents[0] if agents else 'FullStack Dev'}
+DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
+"""
             with open(install_dir / ".env", "w") as f: f.write(env_content)
             self.progress.set(0.4)
 
             # 4. Pull Image
-            self.log(f"Pulling {OPENCLAW_IMAGE} (this takes a while)...")
+            self.log(f"Pulling {OPENCLAW_IMAGE}...")
             if not docker_manager.pull_image(OPENCLAW_IMAGE, self.log):
                 raise Exception("Failed to pull Docker image.")
             self.progress.set(0.7)
@@ -105,14 +122,15 @@ class InstallScreen(ctk.CTkFrame):
                 for af in (template_dir / "agents").glob("*.json"): shutil.copy(af, install_dir / "agents" / af.name)
             
             shortcut_creator.create_desktop_shortcut(str(install_dir / "launcher.pyw"), "OpenClaw")
-            if platform.system() == "Windows":
-                try:
-                    from platforms.windows.firewall_windows import configure_firewall
-                    configure_firewall(port, self.log)
-                except Exception: pass
-            
+            self.progress.set(0.8)
+
             # 6. State
-            state_data = {"installed": True, "install_dir": str(install_dir), "port": port}
+            state_data = {
+                "installed": True, 
+                "install_dir": str(install_dir), 
+                "port": port,
+                "gateway_token": gateway_token
+            }
             with open(INSTALL_STATE_FILE, "w") as f: json.dump(state_data, f)
             self.progress.set(0.9)
 
@@ -142,25 +160,29 @@ class InstallScreen(ctk.CTkFrame):
     def open_dashboard(self):
         def _wait_and_open():
             from main import INSTALL_STATE_FILE
-            import json
             
-            # Resolve port
+            # Resolve port and token
             port = self.app.install_data.get("port")
-            if not port:
+            token = self.app.install_data.get("gateway_token")
+            
+            if not port or not token:
                 if INSTALL_STATE_FILE.exists():
                     try:
                         with open(INSTALL_STATE_FILE, "r") as f:
                             state = json.load(f)
-                            port = state.get("port")
+                            port = port or state.get("port")
+                            token = token or state.get("gateway_token")
                     except Exception: pass
-            if not port: port = 3000
             
-            url = f"http://localhost:{port}"
+            port = port or 18789
+            url = f"http://localhost:{port}/?token={token}" if token else f"http://localhost:{port}"
+            
             self.log("Waiting for OpenClaw dashboard to start...")
             
             for i in range(12): # 60 seconds
                 try:
-                    response = requests.get(url, timeout=5)
+                    # Use a simpler check if token is required (maybe token endpoint or just base)
+                    response = requests.get(f"http://localhost:{port}", timeout=5)
                     if response.status_code < 500:
                         self.log(f"Dashboard is ready at {url}")
                         webbrowser.open(url)

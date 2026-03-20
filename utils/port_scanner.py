@@ -13,7 +13,7 @@ def scan_port(port: int) -> bool:
         except OSError:
             return False
 
-def get_available_ports(start_port: int = 3000, end_port: int = 9999, count: int = 3) -> list[int]:
+def get_available_ports(start_port: int = 18789, end_port: int = 20000, count: int = 3) -> list[int]:
     """Scans ports and returns the first 'count' available ports."""
     logger.info(f"Scanning for {count} available ports between {start_port} and {end_port}.")
     available = []

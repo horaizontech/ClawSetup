@@ -1,6 +1,7 @@
 import customtkinter as ctk
 import webbrowser
 from pathlib import Path
+import json
 from gui.theme import *
 
 class ManageScreen(ctk.CTkFrame):
@@ -28,9 +29,25 @@ class ManageScreen(ctk.CTkFrame):
         btn_exit.pack(pady=10, fill="x", padx=100)
 
     def launch_dashboard(self):
-        port = self.app.install_data.get("port", 3000)
-        webbrowser.open(f"http://localhost:{port}")
+        from main import INSTALL_STATE_FILE
+        port = self.app.install_data.get("port")
+        token = self.app.install_data.get("gateway_token")
+        
+        if not port or not token:
+            if INSTALL_STATE_FILE.exists():
+                try:
+                    with open(INSTALL_STATE_FILE, "r") as f:
+                        state = json.load(f)
+                        port = port or state.get("port")
+                        token = token or state.get("gateway_token")
+                except Exception: pass
+        
+        port = port or 18789
+        url = f"http://localhost:{port}"
+        if token:
+            url += f"/?token={token}"
+            
+        webbrowser.open(url)
 
     def handle_uninstall(self):
         self.app.do_uninstall()
-        # After app.do_uninstall completes, it calls app.load_screen("welcome") internally

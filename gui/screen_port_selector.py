@@ -7,7 +7,7 @@ class PortSelectorScreen(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent, fg_color=BG_COLOR)
         self.app = app
-        self.selected_port = ctk.IntVar(value=3000)
+        self.selected_port = ctk.IntVar(value=18789)
 
         self.title = ctk.CTkLabel(self, text="Network Configuration", font=FONT_HEADING, text_color=TEXT_COLOR)
         self.title.pack(pady=(20, 10))
@@ -48,7 +48,8 @@ class PortSelectorScreen(ctk.CTkFrame):
         threading.Thread(target=self._do_scan, daemon=True).start()
 
     def _do_scan(self):
-        ports = port_scanner.get_available_ports(3000, 9999, 3)
+        # Scan starting from 18789
+        ports = port_scanner.get_available_ports(start_port=18789, end_port=19999, count=3)
         self.loading_lbl.destroy()
         if not ports:
             ctk.CTkLabel(self.ports_frame, text="No available ports found.", text_color=ERROR_COLOR).pack()

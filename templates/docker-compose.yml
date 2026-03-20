@@ -1,22 +1,15 @@
-version: "3.8"
-
 services:
-  openclaw:
-    image: ${OPENCLAW_IMAGE:-openhands/openclaw:latest}
-    container_name: openclaw-app
-    environment:
-      - WORKSPACE_BASE=${WORKSPACE_BASE}
-      - OLLAMA_API_URL=${OLLAMA_API_URL}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - DEFAULT_AGENT=${DEFAULT_AGENT}
-      - DEFAULT_MODEL=${DEFAULT_MODEL}
-      - PORT=${OPENCLAW_PORT}
-    ports:
-      - "${OPENCLAW_PORT}:${OPENCLAW_PORT}"
-    volumes:
-      - ${WORKSPACE_BASE}:/workspace
-      - ./agents:/app/agents
-      - /var/run/docker.sock:/var/run/docker.sock
+  openclaw-gateway:
+    image: alpine/openclaw:latest
+    container_name: openclaw-gateway
     restart: unless-stopped
-    network_mode: host # Allows easy access to local Ollama on 127.0.0.1
+    ports:
+      - "${OPENCLAW_PORT:-18789}:18789"
+      - "18791:18791"
+    volumes:
+      - "${INSTALL_DIR}/.openclaw:/root/.openclaw"
+      - "${INSTALL_DIR}/workspace:/root/workspace"
+    environment:
+      - OPENCLAW_GATEWAY_TOKEN=${GATEWAY_TOKEN}
+    stdin_open: true
+    tty: true
