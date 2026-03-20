@@ -1,0 +1,68 @@
+name: Build ClawSetup
+
+on:
+  push:
+    branches: [ main ]
+  release:
+    types: [ created ]
+
+jobs:
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Windows EXE
+        run: |
+          pyinstaller --onefile --windowed --name ClawSetup --icon=assets/claw.ico --add-data "templates;templates" --add-data "assets;assets" --hidden-import customtkinter --hidden-import PIL --hidden-import psutil --hidden-import requests --hidden-import pystray --hidden-import win32com --hidden-import win32com.client main.py
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClawSetup-Windows
+          path: dist/ClawSetup.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build macOS APP
+        run: |
+          pyinstaller --onefile --windowed --name ClawSetup --add-data "templates:templates" --add-data "assets:assets" --hidden-import customtkinter --hidden-import PIL --hidden-import psutil --hidden-import requests --hidden-import pystray main.py
+
+      - name: Zip macOS APP
+        run: |
+          cd dist
+          zip -r ClawSetup-macOS.zip ClawSetup.app
+
+      - name: Upload macOS APP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClawSetup-macOS
+          path: dist/ClawSetup-macOS.zip
