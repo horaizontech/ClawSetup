@@ -14,11 +14,10 @@ AGENTS = [
     {"name": "DevOps Engineer", "icon": "🚀", "desc": "Dockerfiles, CI/CD pipelines, cloud deployment scripts", "tools": "Docker, GitHub Actions"}
 ]
 
-class ScreenAgentSelector(ctk.CTkFrame):
-    def __init__(self, master, on_next, on_prev, **kwargs):
-        super().__init__(master, fg_color=BG_COLOR, **kwargs)
-        self.on_next = on_next
-        self.on_prev = on_prev
+class AgentSelectorScreen(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color=BG_COLOR)
+        self.app = app
         self.selected_agents = set()
         self.vars = {}
 
@@ -39,33 +38,26 @@ class ScreenAgentSelector(ctk.CTkFrame):
         nav_frame = ctk.CTkFrame(self, fg_color="transparent")
         nav_frame.pack(pady=20)
 
-        self.btn_prev = ctk.CTkButton(nav_frame, text="Back", command=self.on_prev, fg_color=PANEL_BG, text_color=TEXT_COLOR)
+        self.btn_prev = ctk.CTkButton(nav_frame, text="Back", command=lambda: self.app.load_screen("model"), fg_color=PANEL_BG, text_color=TEXT_COLOR)
         self.btn_prev.pack(side="left", padx=10)
 
-        self.btn_next = ctk.CTkButton(nav_frame, text="Next", command=self.handle_next, fg_color=ACCENT_COLOR, text_color=BG_COLOR)
+        self.btn_next = ctk.CTkButton(nav_frame, text="Next", command=lambda: self.handle_next(), fg_color=ACCENT_COLOR, text_color=BG_COLOR)
         self.btn_next.pack(side="left", padx=10)
 
     def handle_next(self):
-        self.on_next({"agents": list(self.selected_agents)})
+        self.app.install_data["agents"] = list(self.selected_agents)
+        self.app.load_screen("telegram")
 
     def populate_agents(self):
         for a in AGENTS:
             card = ctk.CTkFrame(self.scroll_frame, fg_color=BG_COLOR, border_width=1, border_color=MUTED_TEXT)
             card.pack(fill="x", pady=5, padx=5)
-
             var = ctk.BooleanVar(value=False)
             self.vars[a["name"]] = var
-            
             def toggle(name=a["name"], v=var):
-                if v.get():
-                    self.selected_agents.add(name)
-                else:
-                    self.selected_agents.discard(name)
-
-            cb = ctk.CTkCheckBox(
-                card, text=f"{a['icon']} {a['name']} - {a['desc']}", variable=var, command=toggle,
-                font=FONT_MAIN, text_color=TEXT_COLOR, fg_color=ACCENT_COLOR
-            )
+                if v.get(): self.selected_agents.add(name)
+                else: self.selected_agents.discard(name)
+            cb = ctk.CTkCheckBox(card, text=f"{a['icon']} {a['name']} - {a['desc']}", variable=var, command=toggle, font=FONT_MAIN, text_color=TEXT_COLOR, fg_color=ACCENT_COLOR)
             cb.pack(side="left", padx=10, pady=10)
 
     def select_all(self):

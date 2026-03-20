@@ -6,11 +6,10 @@ import socket
 from gui.theme import *
 from utils import system_check, drive_selector
 
-class ScreenRequirements(ctk.CTkFrame):
-    def __init__(self, master, on_next, on_prev, **kwargs):
-        super().__init__(master, fg_color=BG_COLOR, **kwargs)
-        self.on_next = on_next
-        self.on_prev = on_prev
+class RequirementsScreen(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color=BG_COLOR)
+        self.app = app
         self.requirements_met = False
 
         self.title = ctk.CTkLabel(self, text="System Requirements", font=FONT_HEADING, text_color=TEXT_COLOR)
@@ -26,13 +25,13 @@ class ScreenRequirements(ctk.CTkFrame):
         btn_frame.pack(pady=20)
 
         self.btn_prev = ctk.CTkButton(
-            btn_frame, text="Back", command=self.on_prev,
+            btn_frame, text="Back", command=lambda: self.app.load_screen("welcome"),
             fg_color=PANEL_BG, text_color=TEXT_COLOR
         )
         self.btn_prev.pack(side="left", padx=10)
 
         self.btn_next = ctk.CTkButton(
-            btn_frame, text="Next", command=self.on_next, state="disabled",
+            btn_frame, text="Next", command=lambda: self.app.load_screen("drive"), state="disabled",
             fg_color=PANEL_BG, text_color=MUTED_TEXT
         )
         self.btn_next.pack(side="left", padx=10)
@@ -142,12 +141,8 @@ class ScreenRequirements(ctk.CTkFrame):
             pass
 
         # 2. Relaxed Disk Space Check
-        # Requirement: Check for at least 5GB free on ANY mounted drive
-        # Only block if literally no drive has more than 2GB free
         drives = drive_selector.get_mounted_drives()
         disk_ok = any(d["free_gb"] >= 5.0 for d in drives)
-        
-        # Absolute block if no drive has > 2GB
         if not any(d["free_gb"] >= 2.0 for d in drives):
             disk_ok = False
 

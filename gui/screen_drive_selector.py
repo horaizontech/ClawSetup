@@ -4,11 +4,10 @@ from pathlib import Path
 from gui.theme import *
 from utils import drive_selector
 
-class ScreenDriveSelector(ctk.CTkFrame):
-    def __init__(self, master, on_next, on_prev, **kwargs):
-        super().__init__(master, fg_color=BG_COLOR, **kwargs)
-        self.on_next = on_next
-        self.on_prev = on_prev
+class DriveSelectorScreen(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color=BG_COLOR)
+        self.app = app
         self.selected_path = None
         self.selected_drive = None
         self.drive_cards = []
@@ -37,7 +36,7 @@ class ScreenDriveSelector(ctk.CTkFrame):
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(pady=20)
 
-        self.btn_prev = ctk.CTkButton(btn_frame, text="Back", command=self.on_prev, fg_color=PANEL_BG, text_color=TEXT_COLOR)
+        self.btn_prev = ctk.CTkButton(btn_frame, text="Back", command=lambda: self.app.load_screen("requirements"), fg_color=PANEL_BG, text_color=TEXT_COLOR)
         self.btn_prev.pack(side="left", padx=10)
 
         self.btn_next = ctk.CTkButton(btn_frame, text="Next", command=self.handle_next, state="disabled", fg_color=PANEL_BG)
@@ -58,7 +57,8 @@ class ScreenDriveSelector(ctk.CTkFrame):
         except Exception:
             pass
 
-        self.on_next({"install_dir": str(self.selected_path)})
+        self.app.install_data["install_dir"] = str(self.selected_path)
+        self.app.load_screen("port")
 
     def populate_drives(self):
         drives = drive_selector.get_mounted_drives()
@@ -66,7 +66,6 @@ class ScreenDriveSelector(ctk.CTkFrame):
             ctk.CTkLabel(self.drives_frame, text="No drives found.", text_color=ERROR_COLOR).pack()
             return
 
-        # Find best drive but don't auto-select yet
         best_drive = max(drives, key=lambda d: d["free_gb"])
 
         for d in drives:
@@ -81,35 +80,26 @@ class ScreenDriveSelector(ctk.CTkFrame):
                 badge = ctk.CTkLabel(card, text=" Recommended ", fg_color=SUCCESS_COLOR, text_color=BG_COLOR, corner_radius=5)
                 badge.pack(side="right", padx=10)
 
-            # Bind click events to card and all its children
             for widget in [card, lbl]:
                 widget.bind("<Button-1>", lambda e, d=d, c=card: self.select_drive(d, c))
             if d == best_drive:
-                # Need to bind badge as well
                 for widget in card.winfo_children():
                     if isinstance(widget, ctk.CTkLabel):
                         widget.bind("<Button-1>", lambda e, d=d, c=card: self.select_drive(d, c))
 
             self.drive_cards.append((card, d))
 
-        # Auto-select the best one to show initial path
         self.select_drive(best_drive, self.drive_cards[0][0])
 
     def select_drive(self, drive_info, card_widget):
         self.selected_drive = drive_info
-        
-        # Update highlighting
         for card, info in self.drive_cards:
             if card == card_widget:
                 card.configure(border_color=ACCENT_COLOR, border_width=2)
             else:
                 card.configure(border_color=MUTED_TEXT, border_width=1)
-        
-        # Update path preview
         self.selected_path = Path(drive_info["mountpoint"]) / "OpenClaw"
         self.path_var.set(str(self.selected_path))
-        
-        # Validate space
         self.validate_space(drive_info["free_gb"])
 
     def validate_space(self, free_gb):
@@ -130,8 +120,6 @@ class ScreenDriveSelector(ctk.CTkFrame):
             path = Path(folder)
             self.selected_path = path / "OpenClaw"
             self.path_var.set(str(self.selected_path))
-            
-            # Re-validate space for the custom folder
             try:
                 import shutil
                 usage = shutil.disk_usage(folder)

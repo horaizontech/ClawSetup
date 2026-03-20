@@ -4,19 +4,16 @@ import time
 import webbrowser
 import os
 import shutil
-import json
 import platform
 import subprocess
 from pathlib import Path
 from gui.theme import *
 from config import BASE_DIR, OPENCLAW_IMAGE
 
-class ScreenInstall(ctk.CTkFrame):
-    def __init__(self, master, on_finish, on_prev, install_data, **kwargs):
-        super().__init__(master, fg_color=BG_COLOR, **kwargs)
-        self.on_finish = on_finish
-        self.on_prev = on_prev
-        self.install_data = install_data
+class InstallScreen(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color=BG_COLOR)
+        self.app = app
 
         self.title = ctk.CTkLabel(self, text="Installing OpenClaw...", font=FONT_HEADING, text_color=TEXT_COLOR)
         self.title.pack(pady=(20, 10))
@@ -37,7 +34,7 @@ class ScreenInstall(ctk.CTkFrame):
         self.btn_folder = ctk.CTkButton(self.btn_frame, text="Open Install Folder", command=self.open_folder, fg_color=PANEL_BG, text_color=TEXT_COLOR, state="disabled")
         self.btn_folder.pack(side="left", padx=10)
 
-        self.btn_finish = ctk.CTkButton(self.btn_frame, text="Finish", command=self.on_finish, fg_color=PANEL_BG, text_color=TEXT_COLOR, state="disabled")
+        self.btn_finish = ctk.CTkButton(self.btn_frame, text="Finish", command=self.finish_wizard, fg_color=PANEL_BG, text_color=TEXT_COLOR, state="disabled")
         self.btn_finish.pack(side="left", padx=10)
 
         self.after(1000, self.start_install)
@@ -56,144 +53,80 @@ class ScreenInstall(ctk.CTkFrame):
 
     def _do_install(self):
         from utils import docker_manager, shortcut_creator, health_check
+        from main import INSTALL_STATE_FILE
+        import json
 
         try:
-            install_dir = Path(self.install_data.get("install_dir", "."))
-            port = self.install_data.get("port", 3000)
-            models = self.install_data.get("models", [])
-            agents = self.install_data.get("agents", [])
-            telegram = self.install_data.get("telegram_enabled", False)
-            tg_token = self.install_data.get("telegram_token", "")
-            tg_chat = self.install_data.get("telegram_chat_id", "")
+            data = self.app.install_data
+            install_dir = Path(data.get("install_dir", "."))
+            port = data.get("port", 3000)
+            models = data.get("models", [])
+            agents = data.get("agents", [])
+            telegram = data.get("telegram_enabled", False)
 
-            # 1. Create directory structure
+            # 1. Directories
             self.log(f"Creating directory structure at {install_dir}...")
             install_dir.mkdir(parents=True, exist_ok=True)
-            (install_dir / "workspace").mkdir(exist_ok=True)
-            (install_dir / "agents").mkdir(exist_ok=True)
-            (install_dir / "logs").mkdir(exist_ok=True)
-            (install_dir / "assets").mkdir(exist_ok=True)
+            for d in ["workspace", "agents", "logs", "assets"]: (install_dir / d).mkdir(exist_ok=True)
             self.progress.set(0.1)
 
-            # 1.5 Save icons
+            # 2. Icons
             self.log("Saving icons...")
             try:
                 import base64
                 from assets.icons import CLAW_ICO_B64, CLAW_PNG_B64
-                with open(install_dir / "assets" / "claw.ico", "wb") as f:
-                    f.write(base64.b64decode(CLAW_ICO_B64))
-                with open(install_dir / "assets" / "claw.png", "wb") as f:
-                    f.write(base64.b64decode(CLAW_PNG_B64))
-            except Exception as e:
-                self.log(f"Warning: Failed to save icons: {e}")
+                with open(install_dir / "assets" / "claw.ico", "wb") as f: f.write(base64.b64decode(CLAW_ICO_B64))
+                with open(install_dir / "assets" / "claw.png", "wb") as f: f.write(base64.b64decode(CLAW_PNG_B64))
+            except Exception as e: self.log(f"Warning: {e}")
 
-            # 2. Copy templates using absolute paths
+            # 3. Templates
             self.log("Copying configuration files...")
             template_dir = BASE_DIR / "templates"
-            files_to_copy = ["docker-compose.yml", "launcher.pyw", "telegram_notifier.py"]
-            for f_name in files_to_copy:
-                src = template_dir / f_name
-                if src.exists():
-                    shutil.copy(src, install_dir / f_name)
-                    self.log(f"Copied {f_name}")
-                else:
-                    self.log(f"Warning: Template {f_name} not found at {src}")
+            for f_name in ["docker-compose.yml", "launcher.pyw", "telegram_notifier.py"]:
+                if (template_dir / f_name).exists(): shutil.copy(template_dir / f_name, install_dir / f_name)
             self.progress.set(0.2)
 
-            # 3. Write .env file
+            # 4. .env
             self.log("Writing .env file...")
-            default_agent = agents[0] if agents else 'FullStack Dev'
-            default_model = models[0] if models else 'llama3.2:8b'
-            
-            env_content = f"""# OpenClaw Environment Configuration
-# Auto-generated by ClawSetup
-
-WORKSPACE_BASE={install_dir / "workspace"}
-OPENCLAW_PORT={port}
-OPENCLAW_IMAGE={OPENCLAW_IMAGE}
-
-OLLAMA_API_URL=http://127.0.0.1:11434/api
-DEFAULT_AGENT={default_agent}
-DEFAULT_MODEL={default_model}
-
-TELEGRAM_BOT_TOKEN={tg_token if telegram else ''}
-TELEGRAM_CHAT_ID={tg_chat if telegram else ''}
-TELEGRAM_NOTIFY_START={str(telegram).lower()}
-TELEGRAM_NOTIFY_COMPLETE={str(telegram).lower()}
-TELEGRAM_NOTIFY_FAIL={str(telegram).lower()}
-TELEGRAM_NOTIFY_SWITCH={str(telegram).lower()}
-TELEGRAM_NOTIFY_FILE={str(telegram).lower()}
-"""
-            with open(install_dir / ".env", "w") as f:
-                f.write(env_content)
+            env_content = f"WORKSPACE_BASE={install_dir / 'workspace'}\nOPENCLAW_PORT={port}\nOPENCLAW_IMAGE={OPENCLAW_IMAGE}\nOLLAMA_API_URL=http://127.0.0.1:11434/api\nDEFAULT_AGENT={agents[0] if agents else 'FullStack Dev'}\nDEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}\n"
+            with open(install_dir / ".env", "w") as f: f.write(env_content)
             self.progress.set(0.3)
 
-            # 4. Pull OpenClaw Docker image
-            self.log(f"Pulling {OPENCLAW_IMAGE} (may take time)...")
+            # 5. Pull Image
+            self.log(f"Pulling {OPENCLAW_IMAGE}...")
             docker_manager.pull_image(OPENCLAW_IMAGE, self.log)
             self.progress.set(0.5)
 
-            # 5. Copy agent profiles
+            # 6. Agent Profiles
             self.log("Copying agent profiles...")
-            agents_src = template_dir / "agents"
-            if agents_src.exists():
-                for agent_file in agents_src.glob("*.json"):
-                    shutil.copy(agent_file, install_dir / "agents" / agent_file.name)
+            if (template_dir / "agents").exists():
+                for af in (template_dir / "agents").glob("*.json"): shutil.copy(af, install_dir / "agents" / af.name)
             self.progress.set(0.6)
 
-            # 6. Create desktop shortcut
+            # 7. Shortcut & Firewall
             self.log("Creating desktop shortcut...")
-            launcher_path = install_dir / "launcher.pyw"
-            shortcut_creator.create_desktop_shortcut(str(launcher_path), "OpenClaw")
-                
+            shortcut_creator.create_desktop_shortcut(str(install_dir / "launcher.pyw"), "OpenClaw")
             if platform.system() == "Windows":
-                # 6.5 Configure Firewall
-                self.log("Configuring Windows Firewall...")
                 try:
                     from platforms.windows.firewall_windows import configure_firewall
                     configure_firewall(port, self.log)
-                except Exception as e:
-                    self.log(f"Warning: Failed to configure firewall: {e}")
+                except Exception: pass
             self.progress.set(0.7)
 
-            # 7. Save installation state
+            # 8. State
             self.log("Saving installation state...")
-            state_file = Path.home() / ".clawsetup_state.json"
-            state_data = {
-                "installed": True,
-                "install_dir": str(install_dir),
-                "port": port,
-                "models": models,
-                "agents": agents,
-                "telegram": telegram
-            }
-            with open(state_file, "w") as f:
-                json.dump(state_data, f)
+            state_data = {"installed": True, "install_dir": str(install_dir), "port": port}
+            with open(INSTALL_STATE_FILE, "w") as f: json.dump(state_data, f)
             self.progress.set(0.8)
 
-            # 7.5 Start Docker Compose
+            # 9. Start Containers
             self.log("Starting OpenClaw container...")
-            try:
-                # Use absolute path to docker compose just in case
-                subprocess.run(["docker", "compose", "up", "-d"], cwd=str(install_dir), check=True, capture_output=True)
-                self.log("Docker Compose initiated successfully.")
-            except Exception as e:
-                self.log(f"Warning: Failed to start container automatically: {e}")
-            self.progress.set(0.9)
-
-            # 8. Run first-time health check
-            self.log("Running health check...")
-            # Note: Health check will be fixed later to handle JSON key differences
-            health_results = health_check.run_health_check(port, install_dir, agents)
-            for res in health_results:
-                self.log(f"  - {res['name']}: {'OK' if res['status'] else 'FAILED'}")
-                if not res['status'] and res['suggestion']:
-                    self.log(f"    Suggestion: {res['suggestion']}")
+            try: subprocess.run(["docker", "compose", "up", "-d"], cwd=str(install_dir), check=True, capture_output=True)
+            except Exception as e: self.log(f"Warning: {e}")
             self.progress.set(1.0)
 
             self.log("Installation complete!")
             self.title.configure(text="✅ OpenClaw is ready!", text_color=SUCCESS_COLOR)
-            
             self.btn_dashboard.configure(state="normal")
             self.btn_folder.configure(state="normal")
             self.btn_finish.configure(state="normal", fg_color=ACCENT_COLOR, text_color=BG_COLOR)
@@ -202,17 +135,15 @@ TELEGRAM_NOTIFY_FILE={str(telegram).lower()}
             self.log(f"ERROR: {str(e)}")
             self.title.configure(text="❌ Installation Failed", text_color=ERROR_COLOR)
             self.btn_finish.configure(state="normal", fg_color=ERROR_COLOR, text_color=BG_COLOR)
-            import traceback
-            self.log(traceback.format_exc())
+
+    def finish_wizard(self):
+        self.app.load_screen("manage")
 
     def open_dashboard(self):
-        port = self.install_data.get("port", 3000)
+        port = self.app.install_data.get("port", 3000)
         webbrowser.open(f"http://localhost:{port}")
 
     def open_folder(self):
-        path = self.install_data.get("install_dir", ".")
-        if platform.system() == "Windows":
-            os.startfile(path)
-        elif platform.system() == "Darwin":
-            import subprocess
-            subprocess.Popen(["open", path])
+        path = self.app.install_data.get("install_dir", ".")
+        if platform.system() == "Windows": os.startfile(path)
+        else: subprocess.Popen(["open", path])

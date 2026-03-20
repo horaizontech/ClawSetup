@@ -2,10 +2,10 @@ import customtkinter as ctk
 from gui.theme import *
 from utils.system_check import get_os_info
 
-class ScreenWelcome(ctk.CTkFrame):
-    def __init__(self, master, on_next, **kwargs):
-        super().__init__(master, fg_color=BG_COLOR, **kwargs)
-        self.on_next = on_next
+class WelcomeScreen(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color=BG_COLOR)
+        self.app = app
 
         # ASCII Art Logo
         self.logo_label = ctk.CTkLabel(
@@ -13,10 +13,10 @@ class ScreenWelcome(ctk.CTkFrame):
             text="""
    /\\   /\\   /\\
   /  \\ /  \\ /  \\
- |    |    |    |
-  \\  / \\  / \\  /
-   \\/   \\/   \\/
- OPENCLAW SETUP
+  |    |    |    |
+   \\  / \\  / \\  /
+    \\/   \\/   \\/
+  OPENCLAW SETUP
             """, 
             font=FONT_MONO, 
             text_color=ACCENT_COLOR,
@@ -43,7 +43,7 @@ class ScreenWelcome(ctk.CTkFrame):
         self.btn_next = ctk.CTkButton(
             self, 
             text="Begin Setup", 
-            command=self.on_next,
+            command=lambda: self.app.load_screen("requirements"),
             fg_color=ACCENT_COLOR,
             text_color=BG_COLOR,
             hover_color="#00C4CC",

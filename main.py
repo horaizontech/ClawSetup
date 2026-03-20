@@ -8,46 +8,27 @@ import os
 from pathlib import Path
 import customtkinter as ctk
 
-# Setup global error handling first
+# Setup global error handling
 from utils.error_handler import setup_error_handler
 setup_error_handler()
 
+import config
 from utils.updater import check_for_updates, show_update_banner
 from gui.theme import set_theme
 
-# Import all wizard screens
-from gui.screen_welcome import ScreenWelcome
-from gui.screen_requirements import ScreenRequirements
-from gui.screen_drive_selector import ScreenDriveSelector
-from gui.screen_port_selector import ScreenPortSelector
-from gui.screen_model_selector import ScreenModelSelector
-from gui.screen_agent_selector import ScreenAgentSelector
-from gui.screen_telegram import ScreenTelegram
-from gui.screen_install import ScreenInstall
+# Import all screens
+from gui.screen_welcome import WelcomeScreen
+from gui.screen_requirements import RequirementsScreen
+from gui.screen_drive_selector import DriveSelectorScreen
+from gui.screen_port_selector import PortSelectorScreen
+from gui.screen_model_selector import ModelSelectorScreen
+from gui.screen_agent_selector import AgentSelectorScreen
+from gui.screen_telegram import TelegramScreen
+from gui.screen_install import InstallScreen
+from gui.screen_manage import ManageScreen
 
 # Centralized path for installation state
 INSTALL_STATE_FILE = Path.home() / ".clawsetup_state.json"
-
-class ScreenManage(ctk.CTkFrame):
-    """Screen shown when ClawSetup is already installed."""
-    def __init__(self, master, install_data, on_repair, on_uninstall, on_exit):
-        super().__init__(master, fg_color="transparent")
-        
-        lbl_title = ctk.CTkLabel(self, text="ClawSetup Manager", font=("Roboto", 24, "bold"), text_color="#00F5FF")
-        lbl_title.pack(pady=(40, 10))
-        
-        install_dir = install_data.get("install_dir", "Unknown")
-        lbl_info = ctk.CTkLabel(self, text=f"OpenClaw is currently installed at:\n{install_dir}", font=("Roboto", 14))
-        lbl_info.pack(pady=(0, 30))
-        
-        btn_repair = ctk.CTkButton(self, text="Repair Installation", command=on_repair, height=40, font=("Roboto", 14))
-        btn_repair.pack(pady=10, fill="x", padx=100)
-        
-        btn_uninstall = ctk.CTkButton(self, text="Uninstall OpenClaw", command=on_uninstall, height=40, font=("Roboto", 14), fg_color="#FF4444", hover_color="#CC0000")
-        btn_uninstall.pack(pady=10, fill="x", padx=100)
-        
-        btn_exit = ctk.CTkButton(self, text="Exit", command=on_exit, height=40, font=("Roboto", 14), fg_color="#333333", hover_color="#555555")
-        btn_exit.pack(pady=10, fill="x", padx=100)
 
 class ClawSetupApp(ctk.CTk):
     def __init__(self, repair_mode=False, uninstall_mode=False):
@@ -57,7 +38,6 @@ class ClawSetupApp(ctk.CTk):
         self.geometry("800x600")
         self.resizable(False, False)
         
-        # Initialize theme correctly
         set_theme()
         
         # Center window
@@ -67,50 +47,17 @@ class ClawSetupApp(ctk.CTk):
         self.geometry(f"+{x}+{y}")
 
         self.install_data = {}
-        self.current_step = 0
-        self.screens = []
-        self.container = ctk.CTkFrame(self, fg_color="transparent")
-        self.container.pack(fill="both", expand=True)
+        self.is_installed = False
         
-        # Check for updates in background
-        check_for_updates(self.on_update_available)
-
-        if uninstall_mode:
-            self.load_install_data()
-            self.do_uninstall()
-            return
-            
-        if repair_mode:
-            self.load_install_data()
-            self.start_wizard()
-            return
-
         # Show splash screen first
         self.show_splash()
 
-    def clear_screen(self):
-        """Safely clear all widgets from the main container."""
-        for widget in self.container.winfo_children():
-            widget.destroy()
-
-    def load_install_data(self):
-        """Force re-read installation state from disk."""
-        if INSTALL_STATE_FILE.exists():
-            try:
-                with open(INSTALL_STATE_FILE, "r") as f:
-                    self.install_data = json.load(f)
-            except Exception as e:
-                print(f"Failed to load install data: {e}")
-                self.install_data = {}
-        else:
-            self.install_data = {}
-
-    def on_update_available(self, new_version, release_url):
-        self.after(0, lambda: show_update_banner(self, new_version, release_url))
-
     def show_splash(self):
-        self.clear_screen()
-        self.splash_frame = ctk.CTkFrame(self.container, fg_color="transparent")
+        # Clear everything
+        for widget in self.winfo_children():
+            widget.destroy()
+            
+        self.splash_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.splash_frame.pack(fill="both", expand=True)
         
         logo = ctk.CTkLabel(self.splash_frame, text="/// CLAW SETUP ///", font=("JetBrains Mono", 36, "bold"), text_color="#00F5FF")
@@ -123,146 +70,136 @@ class ClawSetupApp(ctk.CTk):
         def animate(val):
             if val <= 1.0:
                 self.progress.set(val)
-                self.after(30, animate, val + 0.02)
+                self.after(30, animate, val + 0.05)
             else:
-                self.splash_frame.destroy()
-                self.check_install_state()
+                self.show_main_content()
                 
         self.after(100, animate, 0)
 
-    def check_install_state(self):
-        self.load_install_data()
-        if self.install_data:
-            self.show_manage_screen()
-        else:
-            self.start_wizard()
+    def show_main_content(self):
+        try:
+            # Clear everything
+            for widget in self.winfo_children():
+                widget.destroy()
+            
+            # Re-check install state fresh from disk
+            self.is_installed = INSTALL_STATE_FILE.exists()
+            if self.is_installed:
+                self.load_install_data()
+            
+            # Build main layout
+            self.setup_main_layout()
+            
+            # Route to correct screen
+            if self.is_installed:
+                self.load_screen("manage")
+            else:
+                self.load_screen("welcome")
+                
+        except Exception as e:
+            # Show error visibly instead of blank window
+            import traceback
+            error_label = ctk.CTkLabel(
+                self, 
+                text=f"Startup Error:\n{traceback.format_exc()}",
+                text_color="red",
+                wraplength=600,
+                justify="left"
+            )
+            error_label.pack(padx=20, pady=20)
 
-    def show_manage_screen(self):
-        self.clear_screen()
-        manage_screen = ScreenManage(
-            self.container, 
-            self.install_data,
-            on_repair=self.start_wizard,
-            on_uninstall=self.do_uninstall,
-            on_exit=self.destroy
-        )
-        manage_screen.pack(fill="both", expand=True)
+    def setup_main_layout(self):
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        
+        # Sidebar
+        self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color="#0A0F16")
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_propagate(False)
+        
+        sidebar_title = ctk.CTkLabel(self.sidebar, text="INSTALLER", font=("JetBrains Mono", 16, "bold"), text_color="#00F5FF")
+        sidebar_title.pack(pady=20)
+        
+        # Main content frame
+        self.main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#0D1117")
+        self.main_frame.grid(row=0, column=1, sticky="nsew")
+        self.main_frame.grid_columnconfigure(0, weight=1)
+        self.main_frame.grid_rowconfigure(0, weight=1)
+
+    def load_screen(self, screen_name):
+        try:
+            # Clear main frame
+            for widget in self.main_frame.winfo_children():
+                widget.destroy()
+            
+            # Map screen names to classes
+            screens = {
+                "welcome": lambda: WelcomeScreen(self.main_frame, self),
+                "requirements": lambda: RequirementsScreen(self.main_frame, self),
+                "drive": lambda: DriveSelectorScreen(self.main_frame, self),
+                "port": lambda: PortSelectorScreen(self.main_frame, self),
+                "model": lambda: ModelSelectorScreen(self.main_frame, self),
+                "agent": lambda: AgentSelectorScreen(self.main_frame, self),
+                "telegram": lambda: TelegramScreen(self.main_frame, self),
+                "install": lambda: InstallScreen(self.main_frame, self),
+                "manage": lambda: ManageScreen(self.main_frame, self),
+            }
+            
+            if screen_name not in screens:
+                raise ValueError(f"Unknown screen: {screen_name}")
+                
+            screen = screens[screen_name]()
+            screen.grid(row=0, column=0, sticky="nsew")
+            
+        except Exception as e:
+            import traceback
+            error_label = ctk.CTkLabel(
+                self.main_frame,
+                text=f"Screen Load Error ({screen_name}):\n{traceback.format_exc()}",
+                text_color="red",
+                wraplength=500,
+                justify="left"
+            )
+            error_label.grid(row=0, column=0, padx=20, pady=20)
+
+    def load_install_data(self):
+        if INSTALL_STATE_FILE.exists():
+            try:
+                with open(INSTALL_STATE_FILE, "r") as f:
+                    self.install_data = json.load(f)
+            except Exception as e:
+                print(f"Failed to load install data: {e}")
 
     def do_uninstall(self):
         install_dir = self.install_data.get("install_dir")
         
-        msg = "Uninstalling OpenClaw...\nCompleting cleanup..."
-        if install_dir:
-            msg = f"Uninstalling OpenClaw from:\n{install_dir}\nStopping containers..."
-
         dialog = ctk.CTkToplevel(self)
         dialog.title("Uninstalling")
-        dialog.geometry("500x300")
+        dialog.geometry("400x200")
         dialog.attributes("-topmost", True)
         
-        # Center dialog
-        dx = self.winfo_x() + (800 - 500) // 2
-        dy = self.winfo_y() + (600 - 300) // 2
-        dialog.geometry(f"+{dx}+{dy}")
-        
-        lbl = ctk.CTkLabel(dialog, text=msg, font=("Roboto", 14), justify="center")
+        lbl = ctk.CTkLabel(dialog, text="Uninstalling OpenClaw...", font=("Roboto", 14))
         lbl.pack(pady=40)
         
         def run_cleanup():
-            # 1. Stop Docker
             if install_dir and Path(install_dir).exists():
-                try:
-                    subprocess.run(["docker", "compose", "down"], cwd=install_dir, capture_output=True, timeout=30)
-                except Exception as e:
-                    print(f"Docker cleanup warning: {e}")
+                try: subprocess.run(["docker", "compose", "down"], cwd=install_dir, capture_output=True, timeout=20)
+                except Exception: pass
             
-            # 2. Force delete state file
             if INSTALL_STATE_FILE.exists():
-                try:
-                    INSTALL_STATE_FILE.unlink()
-                except Exception:
-                    try:
-                        os.remove(str(INSTALL_STATE_FILE))
-                    except Exception as e:
-                        print(f"Critical: Failed to delete state file: {e}")
+                try: os.remove(str(INSTALL_STATE_FILE))
+                except Exception: pass
             
-            # Verify deletion
-            if INSTALL_STATE_FILE.exists():
-                print("Warning: State file still exists after uninstall attempt.")
-            
-            self.after(500, lambda: finish(dialog))
+            self.after(1000, lambda: finish(dialog))
 
         def finish(win):
             win.destroy()
-            self.clear_screen()
-            
-            # Show success message
-            success_lbl = ctk.CTkLabel(self.container, 
-                text="✅ OpenClaw has been removed successfully.\nYou can reinstall it at any time.", 
-                font=("Roboto", 18, "bold"), text_color="#2ECC71")
-            success_lbl.pack(expand=True)
-            
-            # Reset internal state
-            self.install_data = {}
-            
-            # Delay before reloading welcome screen
-            self.after(2000, self.start_wizard)
+            self.load_screen("welcome")
             
         threading.Thread(target=run_cleanup, daemon=True).start()
 
-    def start_wizard(self):
-        self.clear_screen()
-            
-        self.screens = [
-            ScreenWelcome(self.container, self.next_screen),
-            ScreenRequirements(self.container, self.next_screen, self.prev_screen),
-            ScreenDriveSelector(self.container, self.next_screen, self.prev_screen),
-            ScreenPortSelector(self.container, self.next_screen, self.prev_screen),
-            ScreenModelSelector(self.container, self.next_screen, self.prev_screen),
-            ScreenAgentSelector(self.container, self.next_screen, self.prev_screen),
-            ScreenTelegram(self.container, self.next_screen, self.prev_screen),
-            ScreenInstall(self.container, self.finish_setup, self.prev_screen, self.install_data)
-        ]
-        
-        self.current_step = 0
-        self.show_current_screen()
-
-    def show_current_screen(self):
-        for i, screen in enumerate(self.screens):
-            if i == self.current_step:
-                screen.pack(fill="both", expand=True)
-            else:
-                screen.pack_forget()
-
-    def next_screen(self, data=None):
-        if data:
-            self.install_data.update(data)
-            
-        if self.current_step < len(self.screens) - 1:
-            self.current_step += 1
-            self.show_current_screen()
-
-    def prev_screen(self):
-        if self.current_step > 0:
-            self.current_step -= 1
-            self.show_current_screen()
-
-    def finish_setup(self):
-        try:
-            with open(INSTALL_STATE_FILE, "w") as f:
-                json.dump(self.install_data, f)
-        except Exception as e:
-            print(f"Failed to save install state: {e}")
-            
-        self.destroy()
-
 def main():
-    parser = argparse.ArgumentParser(description="ClawSetup - OpenClaw Installer")
-    parser.add_argument("--repair", action="store_true", help="Force repair/reinstall mode")
-    parser.add_argument("--uninstall", action="store_true", help="Uninstall OpenClaw")
-    args = parser.parse_args()
-
-    app = ClawSetupApp(repair_mode=args.repair, uninstall_mode=args.uninstall)
+    app = ClawSetupApp()
     app.mainloop()
 
 if __name__ == "__main__":
