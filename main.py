@@ -23,6 +23,7 @@ from gui.screen_drive_selector import DriveSelectorScreen
 from gui.screen_port_selector import PortSelectorScreen
 from gui.screen_model_selector import ModelSelectorScreen
 from gui.screen_agent_selector import AgentSelectorScreen
+from gui.screen_api_key import APIKeyScreen
 from gui.screen_telegram import TelegramScreen
 from gui.screen_install import InstallScreen
 from gui.screen_manage import ManageScreen
@@ -140,6 +141,7 @@ class ClawSetupApp(ctk.CTk):
                 "port": lambda: PortSelectorScreen(self.main_frame, self),
                 "model": lambda: ModelSelectorScreen(self.main_frame, self),
                 "agent": lambda: AgentSelectorScreen(self.main_frame, self),
+                "api_key": lambda: APIKeyScreen(self.main_frame, self),
                 "telegram": lambda: TelegramScreen(self.main_frame, self),
                 "install": lambda: InstallScreen(self.main_frame, self),
                 "manage": lambda: ManageScreen(self.main_frame, self),

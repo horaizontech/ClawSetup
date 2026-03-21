@@ -6,15 +6,11 @@ from pathlib import Path
 APP_NAME = "ClawSetup"
 APP_VERSION = "1.0.0"
 
-# Official OpenClaw Configuration
-OPENCLAW_IMAGE = "ghcr.io/openclaw/openclaw:latest"
-OPENCLAW_DEFAULT_PORT = 18789
-OPENCLAW_BRIDGE_PORT = 18790
-
-# Compatibility Aliases
-OPENHANDS_IMAGE = OPENCLAW_IMAGE
-OPENHANDS_RUNTIME_IMAGE = OPENCLAW_IMAGE
-OPENHANDS_DASHBOARD_PORT = 18789
+# OpenClaw Native Configuration
+OPENCLAW_DASHBOARD_URL = "http://localhost:18789/dashboard"
+OPENCLAW_GATEWAY_PORT = 18789
+OPENCLAW_NPM_PACKAGE = "openclaw@latest"
+NODE_REQUIRED_VERSION = 22
 
 # Paths
 BASE_DIR = Path(__file__).parent.resolve()
@@ -42,4 +38,4 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(APP_NAME)
-logger.info(f"Initialized {APP_NAME} v{APP_VERSION} configuration using official ghcr.io image.")
+logger.info(f"Initialized {APP_NAME} v{APP_VERSION} configuration (Node.js Native).")

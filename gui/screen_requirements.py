@@ -3,8 +3,10 @@ import threading
 import platform
 import shutil
 import socket
+import subprocess
 from gui.theme import *
 from utils import system_check, drive_selector
+import config
 
 class RequirementsScreen(ctk.CTkFrame):
     def __init__(self, parent, app):
@@ -41,15 +43,13 @@ class RequirementsScreen(ctk.CTkFrame):
 
     def setup_checklist(self):
         reqs = [
-            ("docker", "Docker Desktop"),
+            ("node", f"Node.js {config.NODE_REQUIRED_VERSION}+"),
             ("python", "Python 3.11+"),
             ("git", "Git"),
             ("ram", "8GB RAM Minimum"),
             ("disk", "Sufficient storage found"),
             ("internet", "Internet Connectivity")
         ]
-        if platform.system() == "Windows":
-            reqs.append(("wsl2", "WSL2 Subsystem"))
 
         for key, name in reqs:
             row = ctk.CTkFrame(self.list_frame, fg_color="transparent")
@@ -62,46 +62,31 @@ class RequirementsScreen(ctk.CTkFrame):
             status.pack(side="left", padx=10)
             
             btn = ctk.CTkButton(row, text="Auto-Install", width=100, fg_color=ACCENT_COLOR, text_color=BG_COLOR)
-            if key == "docker":
-                btn.configure(command=self.install_docker)
-            elif key == "wsl2":
-                btn.configure(command=self.install_wsl2)
+            if key == "node" and platform.system() == "Windows":
+                btn.configure(command=self.install_node)
             else:
                 btn.configure(state="disabled")
             
             self.items[key] = {"label": lbl, "status": status, "btn": btn, "row": row}
 
-    def install_docker(self):
-        self.items["docker"]["btn"].configure(state="disabled", text="Installing...")
-        threading.Thread(target=self._do_install_docker, daemon=True).start()
+    def install_node(self):
+        self.items["node"]["btn"].configure(state="disabled", text="Downloading...")
+        # This will be handled in screen_install if missing, but we can offer it here too
+        threading.Thread(target=self._do_install_node, daemon=True).start()
 
-    def _do_install_docker(self):
-        if platform.system() == "Windows":
-            from platforms.windows import docker_windows
-            success = docker_windows.install_docker(lambda m: print(f"[Docker] {m}"))
-        elif platform.system() == "Darwin":
-            from platforms.macos import docker_mac
-            success = docker_mac.install_docker_mac(lambda m: print(f"[Docker] {m}"))
-        else:
-            success = False
-
-        if success:
-            self.after(0, lambda: self._update_status("docker", True, "✅ Installed"))
-        else:
-            self.after(0, lambda: self._update_status("docker", False, "❌ Failed"))
-
-    def install_wsl2(self):
-        self.items["wsl2"]["btn"].configure(state="disabled", text="Installing...")
-        threading.Thread(target=self._do_install_wsl2, daemon=True).start()
-
-    def _do_install_wsl2(self):
-        if platform.system() == "Windows":
-            from platforms.windows import wsl2_installer
-            success = wsl2_installer.install_wsl(lambda m: print(f"[WSL2] {m}"))
-            if success:
-                self.after(0, lambda: self._update_status("wsl2", True, "✅ Installed"))
-            else:
-                self.after(0, lambda: self._update_status("wsl2", False, "❌ Failed"))
+    def _do_install_node(self):
+        # We'll use the logic from the user's request
+        import urllib.request
+        from pathlib import Path
+        try:
+            url = "https://nodejs.org/dist/latest-v22.x/node-v22.14.0-x64.msi"
+            installer_path = Path.home() / "Downloads" / "node-installer.msi"
+            urllib.request.urlretrieve(url, installer_path)
+            self.after(0, lambda: self.items["node"]["btn"].configure(text="Installing..."))
+            subprocess.run(["msiexec", "/i", str(installer_path), "/quiet", "/norestart"], check=True)
+            self.after(0, lambda: self._update_status("node", True, "✅ Installed (Needs Restart)"))
+        except Exception as e:
+            self.after(0, lambda: self._update_status("node", False, f"❌ Failed: {str(e)[:20]}"))
 
     def _update_status(self, key, passed, text):
         status_lbl = self.items[key]["status"]
@@ -140,22 +125,22 @@ class RequirementsScreen(ctk.CTkFrame):
         except OSError:
             pass
 
-        # 2. Relaxed Disk Space Check
+        # 2. Disk Space Check
         drives = drive_selector.get_mounted_drives()
-        disk_ok = any(d["free_gb"] >= 5.0 for d in drives)
-        if not any(d["free_gb"] >= 2.0 for d in drives):
-            disk_ok = False
+        disk_ok = any(d["free_gb"] >= 2.0 for d in drives)
 
         results = {
-            "docker": system_check.check_docker(),
+            "node": system_check.check_node_version() >= config.NODE_REQUIRED_VERSION,
             "python": system_check.check_python(),
             "git": system_check.check_git(),
             "ram": system_check.get_ram_info()["total_gb"] >= 8.0,
             "disk": disk_ok,
             "internet": internet
         }
-        if platform.system() == "Windows":
-            results["wsl2"] = system_check.check_wsl2()
 
         for key, passed in results.items():
-            self.after(0, lambda k=key, p=passed: self._update_status(k, p, "✅ Found" if p else "❌ Missing"))
+            text = "✅ Found" if passed else "❌ Missing"
+            if key == "node" and passed:
+                v = system_check.check_node_version()
+                text = f"✅ v{v}"
+            self.after(0, lambda k=key, p=passed, t=text: self._update_status(k, p, t))

@@ -9,6 +9,7 @@ import subprocess
 import requests
 import json
 import socket
+import urllib.request
 from pathlib import Path
 from gui.theme import *
 import config
@@ -18,9 +19,8 @@ class InstallScreen(ctk.CTkFrame):
         super().__init__(parent, fg_color=BG_COLOR)
         self.app = app
         self.install_dir = None
-        self.dashboard_url = ""
 
-        self.title = ctk.CTkLabel(self, text="Installing OpenClaw...", font=FONT_HEADING, text_color=TEXT_COLOR)
+        self.title = ctk.CTkLabel(self, text="Installing OpenClaw (Native)...", font=FONT_HEADING, text_color=TEXT_COLOR)
         self.title.pack(pady=(20, 10))
 
         self.progress = ctk.CTkProgressBar(self, width=600, height=15, progress_color=ACCENT_COLOR)
@@ -62,122 +62,108 @@ class InstallScreen(ctk.CTkFrame):
         threading.Thread(target=self._do_install, daemon=True).start()
 
     def _do_install(self):
-        from utils import docker_manager, shortcut_creator
-
         try:
-            data = self.app.install_data
-            self.install_dir = Path(data.get("install_dir", "."))
-            port = data.get("port", config.OPENCLAW_DEFAULT_PORT)
-            model = data.get("models", ["llama3.2:8b"])[0]
-            
-            # 1. Directories
-            self.log(f"Step 1: Creating directory structure at {self.install_dir}...")
-            self.install_dir.mkdir(parents=True, exist_ok=True)
-            (self.install_dir / "config").mkdir(exist_ok=True)
-            (self.install_dir / "workspace").mkdir(exist_ok=True)
-            self.progress.set(0.1)
-
-            # 2. .env file
-            self.log("Step 2: Writing configuration (.env)...")
-            env_content = f"""OPENCLAW_IMAGE={config.OPENCLAW_IMAGE}
-OPENCLAW_PORT={port}
-OPENCLAW_CONFIG_DIR={self.install_dir}/config
-OPENCLAW_WORKSPACE_DIR={self.install_dir}/workspace
-OLLAMA_API_URL=http://host.docker.internal:11434/api
-DEFAULT_MODEL={model}
-"""
-            with open(self.install_dir / ".env", "w") as f: f.write(env_content)
+            # Step 1: Check/Install Node.js
+            self.log("Step 1: Verifying Node.js 22+...")
+            if not self.install_nodejs(self.log):
+                raise Exception("Node.js installation failed.")
             self.progress.set(0.2)
 
-            # 3. Docker Compose
-            self.log("Step 3: Writing docker-compose.yml...")
-            template_path = config.TEMPLATES_DIR / "docker-compose.yml"
-            shutil.copy(template_path, self.install_dir / "docker-compose.yml")
-            launch_template = config.TEMPLATES_DIR / "launcher.pyw"
-            if launch_template.exists(): shutil.copy(launch_template, self.install_dir / "launcher.pyw")
-            self.progress.set(0.3)
+            # Step 2: Install OpenClaw via npm
+            self.log("Step 2: Installing OpenClaw via npm...")
+            if not self.install_openclaw_npm(self.log):
+                raise Exception("NPM installation failed.")
+            self.progress.set(0.4)
 
-            # 4. Pull Image
-            self.log(f"Step 4: Pulling {config.OPENCLAW_IMAGE}...")
-            if not docker_manager.pull_image(config.OPENCLAW_IMAGE, self.log):
-                raise Exception("Failed to pull OpenClaw image.")
+            # Step 3: Onboarding
+            self.log("Step 3: Running onboarding wizard...")
+            if not self.run_onboarding(self.app.install_dir, self.log):
+                self.log("Warning: Onboarding returned non-zero code. Proceeding to service setup...")
             self.progress.set(0.6)
 
-            # 5. Start Gateway
-            self.log("Step 5: Starting OpenClaw Container...")
-            subprocess.run(["docker", "compose", "up", "-d"], cwd=str(self.install_dir), check=True)
+            # Step 4: PM2 Service
+            self.log("Step 4: Setting up background service...")
+            self.install_pm2_service(self.log)
             self.progress.set(0.8)
 
-            # 6. Wait for Ready
-            self.dashboard_url = f"http://127.0.0.1:{port}"
-            if self.wait_for_container_ready(self.install_dir, port, self.log):
-                self.log("OpenClaw is ready!")
-            else:
-                self.log("Warning: Container is not reporting healthy, but will try dashboard anyway.")
-
-            # Save state
+            # finalize
+            self.log("Finalizing installation...")
             state_data = {
-                "installed": True, "install_dir": str(self.install_dir), 
-                "port": port, "dashboard_url": self.dashboard_url
+                "installed": True,
+                "install_dir": str(self.app.install_dir),
+                "ai_provider": self.app.ai_provider,
+                "port": config.OPENCLAW_GATEWAY_PORT
             }
-            with open(config.INSTALL_STATE_FILE, "w") as f: json.dump(state_data, f)
-            
-            shortcut_creator.create_desktop_shortcut(str(self.install_dir / "launcher.pyw"), "OpenClaw")
+            with open(config.INSTALL_STATE_FILE, "w") as f:
+                json.dump(state_data, f)
             
             self.progress.set(1.0)
-            self.log("Installation complete!")
+            self.log("Installation complete! Dashboard available at http://localhost:18789")
             self.after(0, self.on_success)
 
         except Exception as e:
             self.log(f"ERROR: {str(e)}")
             self.after(0, self.show_retry)
 
-    def wait_for_container_ready(self, install_dir, port, log_callback):
-        import subprocess
-        import time
-        import requests
+    def install_nodejs(self, log_callback):
+        from utils import system_check
+        version = system_check.check_node_version()
+        if version >= config.NODE_REQUIRED_VERSION:
+            log_callback(f"Node.js v{version} already installed ✓")
+            return True
         
-        log_callback("Waiting for OpenClaw to start (up to 3 minutes)...")
-        
-        for i in range(18):  # 18 x 10s = 180s
-            time.sleep(10)
-            
-            # Check container health status via Docker
-            try:
-                result = subprocess.run(
-                    ["docker", "inspect", "--format", "{{.State.Health.Status}}", "openclaw-gateway"],
-                    capture_output=True, text=True, timeout=10
-                )
-                health = result.stdout.strip()
-                log_callback(f"Container health status: {health} ({(i+1)*10}s)")
-                
-                if health == "healthy":
-                    return True
-                
-                if health == "unhealthy":
-                    log_callback("ERROR: Container became unhealthy. Fetching logs...")
-                    logs = subprocess.run(["docker", "logs", "--tail", "50", "openclaw-gateway"], capture_output=True, text=True)
-                    log_callback(f"Logs:\n{logs.stdout}\n{logs.stderr}")
-                    return False
-            except: pass
-            
-            # Backup: Direct HTTP check
-            try:
-                r = requests.get(f"http://127.0.0.1:{port}/healthz", timeout=5)
-                if r.status_code == 200:
-                    log_callback("Dashboard HTTP check PASSED!")
-                    return True
-            except: pass
-            
-        log_callback("Timeout waiting for health check. Proceeding anyway...")
-        return True
+        log_callback(f"Node.js {config.NODE_REQUIRED_VERSION}+ not found. Downloading...")
+        if platform.system() == "Windows":
+            # Using the URL from user request
+            url = "https://nodejs.org/dist/latest-v22.x/node-v22.14.0-x64.msi"
+            installer_path = Path.home() / "Downloads" / "node-installer.msi"
+            urllib.request.urlretrieve(url, installer_path)
+            log_callback("Installing Node.js silently (this may take a minute)...")
+            subprocess.run(["msiexec", "/i", str(installer_path), "/quiet", "/norestart"], check=True)
+            log_callback("Node.js installed successfully ✓")
+            return True
+        return False
+
+    def install_openclaw_npm(self, log_callback):
+        log_callback("Running: npm install -g openclaw@latest")
+        process = subprocess.Popen(
+            ["npm", "install", "-g", "openclaw@latest"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, shell=True
+        )
+        for line in process.stdout: log_callback(line.strip())
+        process.wait()
+        return process.returncode == 0
+
+    def run_onboarding(self, install_dir, log_callback):
+        log_callback("Running OpenClaw onboarding (Native)...")
+        # We try to automate common answers if possible, but for now we follow the template
+        # Note: In a real scenario, we might need to send Keystrokes or use -y if available
+        process = subprocess.Popen(
+            ["openclaw", "onboard", "--install-daemon"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+            text=True, shell=True, cwd=str(install_dir)
+        )
+        # We don't have interactive logic yet, just streaming output
+        for line in process.stdout: log_callback(line.strip())
+        process.wait()
+        return process.returncode == 0
+
+    def install_pm2_service(self, log_callback):
+        log_callback("Installing PM2...")
+        subprocess.run(["npm", "install", "-g", "pm2"], shell=True, capture_output=True)
+        log_callback("Starting OpenClaw gateway via PM2...")
+        subprocess.run(["pm2", "start", "openclaw", "--", "gateway", "--allow-unconfigured"], shell=True, capture_output=True)
+        subprocess.run(["pm2", "save"], shell=True, capture_output=True)
+        if platform.system() == "Windows":
+            log_callback("Configuring PM2 to start on boot...")
+            subprocess.run(["pm2", "startup", "windows"], shell=True, capture_output=True)
 
     def on_success(self):
         self.title.configure(text="✅ OpenClaw is ready!", text_color=SUCCESS_COLOR)
         self.btn_dashboard.configure(state="normal")
         self.btn_folder.configure(state="normal")
         self.btn_finish.configure(state="normal", text="Finish", fg_color=ACCENT_COLOR, text_color=BG_COLOR)
-        webbrowser.open(self.dashboard_url)
+        webbrowser.open(config.OPENCLAW_DASHBOARD_URL)
 
     def show_retry(self):
         self.title.configure(text="❌ Installation Failed", text_color=ERROR_COLOR)
@@ -185,12 +171,12 @@ DEFAULT_MODEL={model}
         self.btn_finish.configure(state="normal", text="Exit")
 
     def open_dashboard(self):
-        webbrowser.open(self.dashboard_url)
+        webbrowser.open(config.OPENCLAW_DASHBOARD_URL)
 
     def open_folder(self):
-        if self.install_dir: 
-            if platform.system() == "Windows": os.startfile(self.install_dir)
-            else: subprocess.Popen(["open", str(self.install_dir)])
+        path = self.app.install_dir
+        if platform.system() == "Windows": os.startfile(path)
+        else: subprocess.Popen(["open", str(path)])
 
     def finish_wizard(self):
         self.app.load_screen("manage")

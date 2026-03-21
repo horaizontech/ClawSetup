@@ -1,61 +1,43 @@
-import platform
 import subprocess
+import os
+import shutil
+import platform
 import psutil
-import logging
-from pathlib import Path
+import re
 
-logger = logging.getLogger("ClawSetup.SystemCheck")
+def check_python():
+    """Check if Python 3.11+ is installed."""
+    try:
+        import sys
+        return sys.version_info >= (3, 11)
+    except:
+        return False
 
-def get_os_info() -> dict:
-    """Detects OS, release, and architecture."""
-    logger.info("Detecting OS information.")
-    return {
-        "system": platform.system(),
-        "release": platform.release(),
-        "architecture": platform.machine()
-    }
+def check_git():
+    """Check if Git is installed."""
+    return shutil.which("git") is not None
 
-def get_ram_info() -> dict:
-    """Gets total and available RAM in GB."""
-    logger.info("Checking RAM.")
+def check_node_version():
+    """Check Node.js version. Returns major version as int or 0."""
+    try:
+        result = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=5)
+        version = result.stdout.strip()
+        # Matches v22.14.0 -> 22
+        match = re.search(r'v(\d+)', version)
+        if match:
+            return int(match.group(1))
+    except:
+        pass
+    return 0
+
+def get_ram_info():
+    """Get system RAM info."""
     mem = psutil.virtual_memory()
     return {
-        "total_gb": round(mem.total / (1024**3), 2),
-        "available_gb": round(mem.available / (1024**3), 2)
+        "total_gb": round(mem.total / (1024**3), 1),
+        "available_gb": round(mem.available / (1024**3), 1)
     }
 
-def check_command(cmd: list[str], timeout: int = 10) -> bool:
-    """Helper to check if a CLI command runs successfully."""
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        logger.warning(f"Command {' '.join(cmd)} failed or timed out: {e}")
-        return False
-
-def check_docker() -> bool:
-    """Checks if Docker CLI is available."""
-    logger.info("Checking for Docker.")
-    return check_command(["docker", "--version"])
-
-def check_python() -> bool:
-    """Checks if Python is available."""
-    logger.info("Checking for Python.")
-    return check_command(["python", "--version"]) or check_command(["python3", "--version"])
-
-def check_git() -> bool:
-    """Checks if Git is available."""
-    logger.info("Checking for Git.")
-    return check_command(["git", "--version"])
-
-def check_node() -> bool:
-    """Checks if Node.js is available."""
-    logger.info("Checking for Node.js.")
-    return check_command(["node", "--version"])
-
-def check_wsl2() -> bool:
-    """Checks if WSL2 is installed (Windows only)."""
-    if platform.system() != "Windows":
-        return False
-    logger.info("Checking for WSL2.")
-    return check_command(["wsl", "--status"])
+def check_docker():
+    """Legacy: check if Docker is installed."""
+    return shutil.which("docker") is not None

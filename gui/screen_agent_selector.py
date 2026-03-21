@@ -46,7 +46,7 @@ class AgentSelectorScreen(ctk.CTkFrame):
 
     def handle_next(self):
         self.app.install_data["agents"] = list(self.selected_agents)
-        self.app.load_screen("telegram")
+        self.app.load_screen("api_key")
 
     def populate_agents(self):
         for a in AGENTS:
