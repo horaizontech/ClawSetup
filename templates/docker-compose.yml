@@ -5,7 +5,6 @@ services:
     restart: unless-stopped
     ports:
       - "${OPENCLAW_PORT:-18789}:18789"
-      - "18791:18791"
     volumes:
       - "${INSTALL_DIR}/.openclaw:/root/.openclaw"
       - "${INSTALL_DIR}/workspace:/root/workspace"

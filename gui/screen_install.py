@@ -9,6 +9,7 @@ import subprocess
 import requests
 import secrets
 import json
+import socket
 from pathlib import Path
 from gui.theme import *
 from config import BASE_DIR, OPENCLAW_IMAGE
@@ -60,6 +61,22 @@ class InstallScreen(ctk.CTkFrame):
         self.btn_finish.configure(state="disabled")
         threading.Thread(target=self._do_install, daemon=True).start()
 
+    def check_port_available(self, port, log_callback):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex(('localhost', int(port)))
+        sock.close()
+        if result == 0:
+            log_callback(f"WARNING: Port {port} is already in use. Finding alternative...")
+            # Find next available port
+            for p in range(18789, 18900):
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                r = s.connect_ex(('localhost', p))
+                s.close()
+                if r != 0:
+                    log_callback(f"Using port {p} instead")
+                    return p
+        return port
+
     def validate_compose_file(self, install_dir):
         compose_path = Path(install_dir) / "docker-compose.yml"
         if not compose_path.exists():
@@ -104,28 +121,32 @@ class InstallScreen(ctk.CTkFrame):
         try:
             data = self.app.install_data
             self.install_dir = Path(data.get("install_dir", "."))
-            port = data.get("port", 18789)
+            raw_port = data.get("port", 18789)
             models = data.get("models", [])
             agents = data.get("agents", [])
             
+            # 1. Pre-flight port check
+            port = self.check_port_available(raw_port, self.log)
+            self.app.install_data["port"] = port # Update app state
+
             # Generate security token
             gateway_token = secrets.token_urlsafe(32)
             self.app.install_data["gateway_token"] = gateway_token
 
-            # 1. Ensure Docker is running
+            # 2. Ensure Docker is running
             if not docker_manager.ensure_docker_running(log_callback=self.log):
                 self.log("ERROR: Installation halted. Docker must be running to proceed.")
                 self.after(0, self.show_retry)
                 return
 
             self.progress.set(0.1)
-            # 2. Directories
+            # 3. Directories
             self.log(f"Creating directory structure at {self.install_dir}...")
             self.install_dir.mkdir(parents=True, exist_ok=True)
             for d in ["workspace", "agents", "logs", "assets", ".openclaw"]: (self.install_dir / d).mkdir(exist_ok=True)
             self.progress.set(0.2)
 
-            # 3. Templates & Env
+            # 4. Templates & Env
             self.log("Setting up configuration...")
             template_dir = BASE_DIR / "templates"
             for f_name in ["docker-compose.yml", "launcher.pyw", "telegram_notifier.py"]:
@@ -148,13 +169,13 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
             with open(self.install_dir / ".env", "w") as f: f.write(env_content)
             self.progress.set(0.4)
 
-            # 4. Pull Image
+            # 5. Pull Image
             self.log(f"Pulling {OPENCLAW_IMAGE}...")
             if not docker_manager.pull_image(OPENCLAW_IMAGE, self.log):
                 raise Exception("Failed to pull Docker image.")
             self.progress.set(0.7)
 
-            # 5. Agent Profiles & Shortcut
+            # 6. Agent Profiles & Shortcut
             self.log("Finalizing installation...")
             if (template_dir / "agents").exists():
                 for af in (template_dir / "agents").glob("*.json"): shutil.copy(af, self.install_dir / "agents" / af.name)
@@ -162,7 +183,7 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
             shortcut_creator.create_desktop_shortcut(str(self.install_dir / "launcher.pyw"), "OpenClaw")
             self.progress.set(0.8)
 
-            # 6. State
+            # 7. State
             state_data = {
                 "installed": True, 
                 "install_dir": str(self.install_dir), 
@@ -172,7 +193,7 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
             with open(INSTALL_STATE_FILE, "w") as f: json.dump(state_data, f)
             self.progress.set(0.9)
 
-            # 7. Start Containers
+            # 8. Start Containers
             # Validate files first
             if not self.validate_compose_file(self.install_dir):
                 raise Exception("Compose file validation failed.")
