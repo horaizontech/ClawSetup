@@ -113,6 +113,39 @@ class InstallScreen(ctk.CTkFrame):
             return False
         return True
 
+    def diagnose_container(self, install_dir, log_callback):
+        self.log("Running container diagnostics...")
+        import subprocess
+        
+        # Check 1: Is the container actually running?
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "name=openclaw-gateway", "--format", "table {{.Names}}\t{{.Status}}\t{{.Ports}}"],
+            capture_output=True, text=True, timeout=10
+        )
+        log_callback(f"Container status:\n{result.stdout}")
+        
+        # Check 2: What are the container logs?
+        result = subprocess.run(
+            ["docker", "logs", "--tail", "50", "openclaw-gateway"],
+            capture_output=True, text=True, timeout=10
+        )
+        log_callback(f"Container logs STDOUT:\n{result.stdout}")
+        log_callback(f"Container logs STDERR:\n{result.stderr}")
+        
+        # Check 3: What ports are actually exposed?
+        result = subprocess.run(
+            ["docker", "port", "openclaw-gateway"],
+            capture_output=True, text=True, timeout=10
+        )
+        log_callback(f"Port mappings:\n{result.stdout}")
+        
+        # Check 4: Inspect the container
+        result = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Status}} - {{.State.Error}}", "openclaw-gateway"],
+            capture_output=True, text=True, timeout=10
+        )
+        log_callback(f"Container inspect: {result.stdout}")
+
     def _do_install(self):
         from utils import docker_manager, shortcut_creator
         from main import INSTALL_STATE_FILE
@@ -201,6 +234,10 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
 
             self.progress.set(1.0)
             self.log("Installation complete!")
+            
+            # Run diagnostics
+            self.diagnose_container(self.install_dir, self.log)
+            
             self.after(0, self.on_success)
             
             # Non-blocking dashboard open attempt
@@ -267,7 +304,6 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
                     self.log("Waiting for dashboard to be ready...")
                     for i in range(12):
                         try:
-                            # Use 127.0.0.1 for health check to ensure local availability
                             r = requests.get(f"http://127.0.0.1:{port}", timeout=5)
                             if r.status_code < 500:
                                 self.log("Dashboard is ready!")
