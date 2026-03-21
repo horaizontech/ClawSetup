@@ -6,13 +6,14 @@ from pathlib import Path
 APP_NAME = "ClawSetup"
 APP_VERSION = "1.0.0"
 
-# OpenClaw Configuration (Primary)
-OPENCLAW_IMAGE = "alpine/openclaw:latest"
+# Official OpenClaw Configuration
+OPENCLAW_IMAGE = "ghcr.io/openclaw/openclaw:latest"
 OPENCLAW_DEFAULT_PORT = 18789
+OPENCLAW_BRIDGE_PORT = 18790
 
-# OpenHands Compatibility Aliases (to prevent ImportErrors)
-OPENHANDS_IMAGE = "alpine/openclaw:latest"
-OPENHANDS_RUNTIME_IMAGE = "alpine/openclaw:latest"
+# Compatibility Aliases
+OPENHANDS_IMAGE = OPENCLAW_IMAGE
+OPENHANDS_RUNTIME_IMAGE = OPENCLAW_IMAGE
 OPENHANDS_DASHBOARD_PORT = 18789
 
 # Paths
@@ -41,4 +42,4 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(APP_NAME)
-logger.info(f"Initialized {APP_NAME} v{APP_VERSION} configuration.")
+logger.info(f"Initialized {APP_NAME} v{APP_VERSION} configuration using official ghcr.io image.")
