@@ -10,6 +10,7 @@ import requests
 import secrets
 import json
 import socket
+import re
 from pathlib import Path
 from gui.theme import *
 from config import BASE_DIR, OPENCLAW_IMAGE
@@ -90,14 +91,12 @@ class InstallScreen(ctk.CTkFrame):
             return False
         
         self.log(f"docker-compose.yml found at {compose_path}")
-        self.log(f"Compose file contents:\n{content}")
         
         env_path = Path(install_dir) / ".env"
         if not env_path.exists():
             self.log("ERROR: .env file not found next to docker-compose.yml")
             return False
 
-        self.log(f".env contents:\n{env_path.read_text()}")
         return True
 
     def start_container(self, install_dir):
@@ -127,7 +126,7 @@ class InstallScreen(ctk.CTkFrame):
             
             # 1. Pre-flight port check
             port = self.check_port_available(raw_port, self.log)
-            self.app.install_data["port"] = port # Update app state
+            self.app.install_data["port"] = port
 
             # Generate security token
             gateway_token = secrets.token_urlsafe(32)
@@ -194,7 +193,6 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
             self.progress.set(0.9)
 
             # 8. Start Containers
-            # Validate files first
             if not self.validate_compose_file(self.install_dir):
                 raise Exception("Compose file validation failed.")
 
@@ -204,6 +202,9 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
             self.progress.set(1.0)
             self.log("Installation complete!")
             self.after(0, self.on_success)
+            
+            # Non-blocking dashboard open attempt
+            threading.Thread(target=self.open_dashboard, daemon=True).start()
 
         except Exception as e:
             self.log(f"ERROR: {str(e)}")
@@ -221,47 +222,93 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
         self.btn_finish.configure(state="normal", text="Finish", fg_color=ACCENT_COLOR, text_color=BG_COLOR)
 
     def open_dashboard(self):
-        def _wait_and_open():
-            from main import INSTALL_STATE_FILE
-            
-            # Resolve port and token
-            port = self.app.install_data.get("port")
-            token = self.app.install_data.get("gateway_token")
-            
-            if not port or not token:
-                if INSTALL_STATE_FILE.exists():
-                    try:
-                        with open(INSTALL_STATE_FILE, "r") as f:
-                            state = json.load(f)
-                            port = port or state.get("port")
-                            token = token or state.get("gateway_token")
-                    except Exception: pass
-            
-            port = port or 18789
-            url = f"http://localhost:{port}/?token={token}" if token else f"http://localhost:{port}"
-            
-            self.log("Waiting for OpenClaw dashboard to start...")
-            
-            for i in range(12): # 60 seconds
-                try:
-                    response = requests.get(f"http://localhost:{port}", timeout=5)
-                    if response.status_code < 500:
-                        self.log(f"Dashboard is ready at {url}")
-                        webbrowser.open(url)
-                        return
-                except Exception:
-                    self.log(f"Dashboard starting... ({(i+1)*5}s)")
-                    time.sleep(5)
-            
-            self.log(f"Opening {url} — dashboard may still be loading")
-            webbrowser.open(url)
+        from main import INSTALL_STATE_FILE
+        install_dir = self.install_dir or self.app.install_data.get("install_dir")
+        port = self.app.install_data.get("port") or 18789
+        
+        self.log("Getting dashboard URL from OpenClaw...")
+        
+        # Method 1: Get tokenized URL directly from openclaw-cli
+        try:
+            result = subprocess.run(
+                ["docker", "compose", "run", "--rm", "openclaw-cli", "dashboard", "--no-open"],
+                capture_output=True,
+                text=True,
+                cwd=str(install_dir),
+                timeout=30
+            )
+            output = result.stdout + result.stderr
+            url_match = re.search(r'http://[^\s]+token=[^\s]+', output)
+            if url_match:
+                dashboard_url = url_match.group(0)
+                # Cleanup potential formatting
+                dashboard_url = dashboard_url.replace("\n", "").replace("\r", "")
+                self.log(f"Dashboard URL found: {dashboard_url}")
+                self.save_dashboard_url(dashboard_url)
+                webbrowser.open(dashboard_url)
+                return
+        except Exception as e:
+            self.log(f"Could not get URL from CLI: {e}")
+        
+        # Method 2: Read token from .env and build URL manually
+        try:
+            env_path = Path(install_dir) / ".env"
+            if env_path.exists():
+                env_content = env_path.read_text()
+                token = None
+                for line in env_content.splitlines():
+                    if line.startswith("GATEWAY_TOKEN="):
+                        token = line.split("=", 1)[1].strip()
+                        break
+                
+                if token:
+                    dashboard_url = f"http://127.0.0.1:{port}/?token={token}"
+                    self.log(f"Using token from .env: {dashboard_url}")
+                    self.log("Waiting for dashboard to be ready...")
+                    for i in range(12):
+                        try:
+                            # Use 127.0.0.1 for health check to ensure local availability
+                            r = requests.get(f"http://127.0.0.1:{port}", timeout=5)
+                            if r.status_code < 500:
+                                self.log("Dashboard is ready!")
+                                webbrowser.open(dashboard_url)
+                                return
+                        except Exception:
+                            pass
+                        self.log(f"Still starting... ({(i+1)*5}s)")
+                        time.sleep(5)
+                    
+                    self.log("Opening dashboard (may still be loading)...")
+                    webbrowser.open(dashboard_url)
+                    return
+        except Exception as e:
+            self.log(f"Could not read token from .env: {e}")
+        
+        # Method 3: Fallback
+        self.log("WARNING: Could not get token automatically")
+        self.log(f"Please open http://127.0.0.1:{port} and enter your token manually")
+        self.log(f"Your token is in: {install_dir}\\.env")
+        webbrowser.open(f"http://127.0.0.1:{port}")
 
-        threading.Thread(target=_wait_and_open, daemon=True).start()
-
-    def finish_wizard(self):
-        self.app.load_screen("manage")
+    def save_dashboard_url(self, url):
+        from main import INSTALL_STATE_FILE
+        install_dir = self.install_dir or self.app.install_data.get("install_dir")
+        if not install_dir: return
+        state_file = Path(install_dir) / "install_state.json"
+        try:
+            if state_file.exists():
+                state = json.loads(state_file.read_text())
+            else:
+                state = {}
+            state["dashboard_url"] = url
+            state_file.write_text(json.dumps(state, indent=2))
+        except Exception as e:
+            self.log(f"Could not save dashboard URL: {e}")
 
     def open_folder(self):
         path = self.app.install_data.get("install_dir", ".")
         if platform.system() == "Windows": os.startfile(path)
         else: subprocess.Popen(["open", path])
+
+    def finish_wizard(self):
+        self.app.load_screen("manage")

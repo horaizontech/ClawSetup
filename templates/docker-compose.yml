@@ -12,3 +12,14 @@ services:
       - OPENCLAW_GATEWAY_TOKEN=${GATEWAY_TOKEN}
     stdin_open: true
     tty: true
+
+  openclaw-cli:
+    image: alpine/openclaw:latest
+    container_name: openclaw-cli
+    network_mode: "service:openclaw-gateway"
+    profiles: ["cli"]
+    volumes:
+      - "${INSTALL_DIR}/.openclaw:/root/.openclaw"
+      - "${INSTALL_DIR}/workspace:/root/workspace"
+    depends_on:
+      - openclaw-gateway
