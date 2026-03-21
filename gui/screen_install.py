@@ -21,6 +21,7 @@ class InstallScreen(ctk.CTkFrame):
         self.app = app
         self.install_dir = None
         self.dashboard_url = ""
+        self.pairing_code = ""
 
         # Yellow Info Banner
         self.info_banner = ctk.CTkFrame(self, fg_color="#FFF9C4", height=50) # Light yellow
@@ -41,6 +42,11 @@ class InstallScreen(ctk.CTkFrame):
 
         self.log_box = ctk.CTkTextbox(self, width=600, height=300, font=FONT_MONO, fg_color=PANEL_BG, text_color=MUTED_TEXT, state="disabled")
         self.log_box.pack(pady=10, padx=20)
+
+        # Pairing Code Frame (Hidden until found)
+        self.pairing_frame = ctk.CTkFrame(self, fg_color="#FFF9C4")
+        self.pairing_label = ctk.CTkLabel(self.pairing_frame, text="", text_color="#FBC02D", font=("Roboto", 14, "bold"))
+        self.pairing_label.pack(pady=10, padx=20)
 
         # Copyable URL Frame (Hidden until success)
         self.url_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -72,6 +78,7 @@ class InstallScreen(ctk.CTkFrame):
 
     def start_install(self):
         self.btn_retry.pack_forget()
+        self.pairing_frame.pack_forget()
         self.title.configure(text="Installing OpenClaw...", text_color=TEXT_COLOR)
         self.btn_finish.configure(state="disabled")
         threading.Thread(target=self._do_install, daemon=True).start()
@@ -84,7 +91,12 @@ class InstallScreen(ctk.CTkFrame):
             self.install_dir = Path(data.get("install_dir", "."))
             port = data.get("port", config.OPENCLAW_DEFAULT_PORT)
             model = data.get("models", ["llama3.2:8b"])[0]
+            telegram_token = data.get("telegram_token", "")
             
+            # Step 0: Inspecting OpenClaw image
+            self.log("Step 0: Inspecting OpenClaw image...")
+            docker_manager.inspect_image(self.install_dir, self.log)
+
             # 1. Directories
             self.log(f"Step 1: Creating directory structure at {self.install_dir}...")
             self.install_dir.mkdir(parents=True, exist_ok=True)
@@ -95,11 +107,13 @@ class InstallScreen(ctk.CTkFrame):
             # 2. .env file
             self.log("Step 2: Writing configuration (.env)...")
             env_content = f"""OPENCLAW_IMAGE={config.OPENCLAW_IMAGE}
-OPENCLAW_PORT={port}
+OPENCLAW_GATEWAY_PORT={port}
+OPENCLAW_BRIDGE_PORT={config.OPENCLAW_BRIDGE_PORT}
 OPENCLAW_CONFIG_DIR={self.install_dir}/config
 OPENCLAW_WORKSPACE_DIR={self.install_dir}/workspace
 OLLAMA_API_URL=http://host.docker.internal:11434/api
 DEFAULT_MODEL={model}
+TELEGRAM_TOKEN={telegram_token}
 """
             with open(self.install_dir / ".env", "w") as f: f.write(env_content)
             self.progress.set(0.2)
@@ -117,29 +131,42 @@ DEFAULT_MODEL={model}
             self.log(f"Step 4: Pulling {config.OPENCLAW_IMAGE}...")
             if not docker_manager.pull_image(config.OPENCLAW_IMAGE, self.log):
                 raise Exception("Failed to pull OpenClaw image.")
-            self.progress.set(0.5)
+            self.progress.set(0.4)
 
             # 5. Onboarding
-            self.log("Step 5: Running mandatory onboarding (one-time setup)...")
-            onboard_cmd = ["docker", "compose", "run", "--rm", "openclaw-cli", "onboard", "--yes"]
+            self.log("Step 5: Running mandatory onboarding...")
+            onboard_cmd = ["docker", "compose", "run", "--rm", "-T", "openclaw-cli", "onboard"]
             result = subprocess.run(onboard_cmd, capture_output=True, text=True, cwd=str(self.install_dir), timeout=180)
-            if result.returncode != 0:
-                self.log("Note: Non-interactive onboarding with --yes failed. Retrying without TTY...")
-                onboard_cmd = ["docker", "compose", "run", "--rm", "-T", "openclaw-cli", "onboard"]
-                result = subprocess.run(onboard_cmd, capture_output=True, text=True, cwd=str(self.install_dir), timeout=180)
-            
             self.log(f"Onboarding output: {result.stdout}")
-            if result.stderr: self.log(f"Onboarding notes: {result.stderr}")
+            if result.stderr: self.log(f"Onboarding logs: {result.stderr}")
+            self.progress.set(0.5)
+
+            # 6. Telegram Setup (Optional)
+            if telegram_token:
+                self.log("Step 6: Configuring Telegram channel...")
+                tel_cmd = ["docker", "compose", "run", "--rm", "-T", "openclaw-cli", "channels", "add", "--channel", "telegram", "--token", telegram_token]
+                result = subprocess.run(tel_cmd, capture_output=True, text=True, cwd=str(self.install_dir), timeout=60)
+                output = result.stdout + result.stderr
+                self.log(f"Telegram setup output: {output}")
+                
+                # Extract pairing code (e.g., "Pairing code: 123456")
+                pair_match = re.search(r'Pairing code[=:\s]+([0-9]+)', output, re.IGNORECASE)
+                if pair_match:
+                    self.pairing_code = pair_match.group(1)
+                    self.log(f"FOUND PAIRING CODE: {self.pairing_code}")
+                    self.after(0, self.display_pairing_code)
+            else:
+                self.log("Step 6: Skipping Telegram setup (no token provided).")
+            self.progress.set(0.6)
+
+            # 7. Start Gateway
+            self.log("Step 7: Starting OpenClaw Gateway...")
+            subprocess.run(["docker", "compose", "up", "-d", "openclaw-gateway"], cwd=str(self.install_dir), check=True)
             self.progress.set(0.7)
 
-            # 6. Start Gateway
-            self.log("Step 6: Starting OpenClaw Gateway...")
-            subprocess.run(["docker", "compose", "up", "-d", "openclaw-gateway"], cwd=str(self.install_dir), check=True)
-            self.progress.set(0.8)
-
-            # 7. Get Token
-            self.log("Step 7: Retrieving dashboard token...")
-            token_cmd = ["docker", "compose", "run", "--rm", "openclaw-cli", "dashboard", "--no-open"]
+            # 8. Get Dashboard Token
+            self.log("Step 8: Retrieving dashboard token...")
+            token_cmd = ["docker", "compose", "run", "--rm", "-T", "openclaw-cli", "dashboard", "--no-open"]
             result = subprocess.run(token_cmd, capture_output=True, text=True, cwd=str(self.install_dir), timeout=60)
             output = result.stdout + result.stderr
             self.log(f"Dashboard info: {output}")
@@ -159,15 +186,16 @@ DEFAULT_MODEL={model}
             # Save state
             state_data = {
                 "installed": True, "install_dir": str(self.install_dir), 
-                "port": port, "dashboard_url": self.dashboard_url
+                "port": port, "dashboard_url": self.dashboard_url,
+                "pairing_code": self.pairing_code
             }
             with open(config.INSTALL_STATE_FILE, "w") as f: json.dump(state_data, f)
             
             shortcut_creator.create_desktop_shortcut(str(self.install_dir / "launcher.pyw"), "OpenClaw")
-            self.progress.set(0.9)
+            self.progress.set(0.8)
 
-            # 8. Health Check
-            self.log("Step 8: Waiting for health check (healthz)...")
+            # 9. Health Check
+            self.log("Step 9: Waiting for health check (healthz)...")
             health_url = f"http://127.0.0.1:{port}/healthz"
             for i in range(18): # 3 minutes
                 try:
@@ -186,6 +214,10 @@ DEFAULT_MODEL={model}
         except Exception as e:
             self.log(f"ERROR: {str(e)}")
             self.after(0, self.show_retry)
+
+    def display_pairing_code(self):
+        self.pairing_frame.pack(fill="x", padx=40, pady=10)
+        self.pairing_label.configure(text=f"TELEGRAM PAIRING CODE: {self.pairing_code}\nSend this code to your bot now!")
 
     def on_success(self):
         self.info_banner.destroy()
@@ -215,7 +247,9 @@ DEFAULT_MODEL={model}
         webbrowser.open(self.dashboard_url)
 
     def open_folder(self):
-        if self.install_dir: os.startfile(self.install_dir)
+        if self.install_dir: 
+            if platform.system() == "Windows": os.startfile(self.install_dir)
+            else: subprocess.Popen(["open", str(self.install_dir)])
 
     def finish_wizard(self):
         self.app.load_screen("manage")

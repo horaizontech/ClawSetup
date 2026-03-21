@@ -95,3 +95,56 @@ def pull_image(image_name: str, log_callback=None) -> bool:
     except Exception as e:
         logger.error(f"Exception pulling {image_name}: {e}")
         return False
+    
+def inspect_image(install_dir, log_callback):
+    import subprocess
+    def log(msg):
+        if log_callback: log_callback(msg)
+        logger.info(msg)
+
+    log("Performing deep image inspection...")
+    
+    # Check 1: What is the entrypoint and default command?
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "--format",
+             "Entrypoint: {{.Config.Entrypoint}}\nCmd: {{.Config.Cmd}}\nWorkDir: {{.Config.WorkingDir}}",
+             "ghcr.io/openclaw/openclaw:latest"],
+            capture_output=True, text=True, timeout=15
+        )
+        log(f"Image config:\n{result.stdout}")
+    except Exception as e:
+        log(f"Error inspecting image config: {e}")
+
+    # Check 2: List all files in /app directory
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "ghcr.io/openclaw/openclaw:latest",
+             "find", "/app", "-maxdepth", "3", "-type", "f", "-name", "*.js"],
+            capture_output=True, text=True, timeout=30
+        )
+        log(f"JS files in /app:\n{result.stdout}")
+    except Exception as e:
+        log(f"Error finding JS files: {e}")
+
+    # Check 4: Try running help to see all available commands
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "ghcr.io/openclaw/openclaw:latest",
+             "node", "/app/dist/index.js", "--help"],
+            capture_output=True, text=True, timeout=15
+        )
+        log(f"CLI help output:\n{result.stdout}\n{result.stderr}")
+    except Exception as e:
+        log(f"Error running help: {e}")
+
+    # Check 5: List /app/dist contents
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "ghcr.io/openclaw/openclaw:latest",
+             "ls", "-la", "/app/dist/"],
+            capture_output=True, text=True, timeout=15
+        )
+        log(f"/app/dist contents:\n{result.stdout}")
+    except Exception as e:
+        log(f"Error listing /app/dist: {e}")
