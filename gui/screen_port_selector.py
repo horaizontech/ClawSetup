@@ -48,7 +48,6 @@ class PortSelectorScreen(ctk.CTkFrame):
         threading.Thread(target=self._do_scan, daemon=True).start()
 
     def _do_scan(self):
-        # Scan starting from 18789
         ports = port_scanner.get_available_ports(start_port=18789, end_port=19999, count=3)
         self.loading_lbl.destroy()
         if not ports:

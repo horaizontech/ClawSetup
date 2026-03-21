@@ -1,27 +1,29 @@
 services:
-  openhands:
-    image: docker.all-hands.dev/all-hands-ai/openhands:0.62
-    stdin_open: true
-    tty: true
-    pull_policy: always
-    container_name: openhands-app
+  openclaw-gateway:
+    image: ${OPENCLAW_IMAGE:-alpine/openclaw:latest}
+    container_name: openclaw-gateway
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "bash", "-c", "timeout 10s bash -c ':> /dev/tcp/127.0.0.1/3000' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 90s
-    environment:
-      - SANDBOX_RUNTIME_CONTAINER_IMAGE=docker.all-hands.dev/all-hands-ai/runtime:0.62-nikolaik
-      - LOG_ALL_EVENTS=true
-      - SANDBOX_USER_ID=${SANDBOX_USER_ID:-1000}
-      - WORKSPACE_MOUNT_PATH=${WORKSPACE_BASE}
+    env_file: .env
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${INSTALL_DIR}/.openhands-state:/.openhands-state
-      - ${WORKSPACE_BASE}:/opt/workspace_base
-    extra_hosts:
-      - host.docker.internal:host-gateway
+      - ${OPENCLAW_CONFIG_DIR:-./config}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR:-./workspace}:/home/node/.openclaw/workspace
     ports:
-      - "${OPENCLAW_PORT:-3000}:3000"
+      - "${OPENCLAW_PORT:-18789}:18789"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:18789/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+
+  openclaw-cli:
+    image: ${OPENCLAW_IMAGE:-alpine/openclaw:latest}
+    container_name: openclaw-cli
+    env_file: .env
+    network_mode: "service:openclaw-gateway"
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR:-./config}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR:-./workspace}:/home/node/.openclaw/workspace
+    depends_on:
+      - openclaw-gateway
+    profiles: ["cli"]
