@@ -1,25 +1,27 @@
 services:
-  openclaw-gateway:
-    image: alpine/openclaw:latest
-    container_name: openclaw-gateway
-    restart: unless-stopped
-    ports:
-      - "${OPENCLAW_PORT:-18789}:18789"
-    volumes:
-      - "${INSTALL_DIR}/.openclaw:/root/.openclaw"
-      - "${INSTALL_DIR}/workspace:/root/workspace"
-    environment:
-      - OPENCLAW_GATEWAY_TOKEN=${GATEWAY_TOKEN}
+  openhands:
+    image: docker.all-hands.dev/all-hands-ai/openhands:0.62
     stdin_open: true
     tty: true
-
-  openclaw-cli:
-    image: alpine/openclaw:latest
-    container_name: openclaw-cli
-    network_mode: "service:openclaw-gateway"
-    profiles: ["cli"]
+    pull_policy: always
+    container_name: openhands-app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "timeout 10s bash -c ':> /dev/tcp/127.0.0.1/3000' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    environment:
+      - SANDBOX_RUNTIME_CONTAINER_IMAGE=docker.all-hands.dev/all-hands-ai/runtime:0.62-nikolaik
+      - LOG_ALL_EVENTS=true
+      - SANDBOX_USER_ID=${SANDBOX_USER_ID:-1000}
+      - WORKSPACE_MOUNT_PATH=${WORKSPACE_BASE}
     volumes:
-      - "${INSTALL_DIR}/.openclaw:/root/.openclaw"
-      - "${INSTALL_DIR}/workspace:/root/workspace"
-    depends_on:
-      - openclaw-gateway
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${INSTALL_DIR}/.openhands-state:/.openhands-state
+      - ${WORKSPACE_BASE}:/opt/workspace_base
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - "${OPENCLAW_PORT:-3000}:3000"
