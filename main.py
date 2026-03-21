@@ -27,8 +27,8 @@ from gui.screen_telegram import TelegramScreen
 from gui.screen_install import InstallScreen
 from gui.screen_manage import ManageScreen
 
-# Centralized path for installation state
-INSTALL_STATE_FILE = Path.home() / ".clawsetup_state.json"
+
+# Imported config above already
 
 class ClawSetupApp(ctk.CTk):
     def __init__(self, repair_mode=False, uninstall_mode=False):
@@ -83,7 +83,7 @@ class ClawSetupApp(ctk.CTk):
                 widget.destroy()
             
             # Re-check install state fresh from disk
-            self.is_installed = INSTALL_STATE_FILE.exists()
+            self.is_installed = config.INSTALL_STATE_FILE.exists()
             if self.is_installed:
                 self.load_install_data()
             
@@ -163,9 +163,9 @@ class ClawSetupApp(ctk.CTk):
             error_label.grid(row=0, column=0, padx=20, pady=20)
 
     def load_install_data(self):
-        if INSTALL_STATE_FILE.exists():
+        if config.INSTALL_STATE_FILE.exists():
             try:
-                with open(INSTALL_STATE_FILE, "r") as f:
+                with open(config.INSTALL_STATE_FILE, "r") as f:
                     self.install_data = json.load(f)
             except Exception as e:
                 print(f"Failed to load install data: {e}")
@@ -186,8 +186,8 @@ class ClawSetupApp(ctk.CTk):
                 try: subprocess.run(["docker", "compose", "down"], cwd=install_dir, capture_output=True, timeout=20)
                 except Exception: pass
             
-            if INSTALL_STATE_FILE.exists():
-                try: os.remove(str(INSTALL_STATE_FILE))
+            if config.INSTALL_STATE_FILE.exists():
+                try: os.remove(str(config.INSTALL_STATE_FILE))
                 except Exception: pass
             
             self.after(1000, lambda: finish(dialog))
