@@ -17,6 +17,7 @@ class InstallScreen(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent, fg_color=BG_COLOR)
         self.app = app
+        self.install_dir = None
 
         self.title = ctk.CTkLabel(self, text="Installing OpenClaw...", font=FONT_HEADING, text_color=TEXT_COLOR)
         self.title.pack(pady=(20, 10))
@@ -59,13 +60,50 @@ class InstallScreen(ctk.CTkFrame):
         self.btn_finish.configure(state="disabled")
         threading.Thread(target=self._do_install, daemon=True).start()
 
+    def validate_compose_file(self, install_dir):
+        compose_path = Path(install_dir) / "docker-compose.yml"
+        if not compose_path.exists():
+            self.log(f"ERROR: docker-compose.yml not found at {compose_path}")
+            return False
+        
+        # Check file is not empty
+        content = compose_path.read_text()
+        if len(content.strip()) < 10:
+            self.log(f"ERROR: docker-compose.yml is empty")
+            return False
+        
+        self.log(f"docker-compose.yml found at {compose_path}")
+        self.log(f"Compose file contents:\n{content}")
+        
+        env_path = Path(install_dir) / ".env"
+        if not env_path.exists():
+            self.log("ERROR: .env file not found next to docker-compose.yml")
+            return False
+
+        self.log(f".env contents:\n{env_path.read_text()}")
+        return True
+
+    def start_container(self, install_dir):
+        self.log("Starting OpenClaw container...")
+        result = subprocess.run(
+            ["docker", "compose", "up", "-d"],
+            capture_output=True,
+            text=True,
+            cwd=str(install_dir)
+        )
+        if result.returncode != 0:
+            self.log(f"Docker Compose STDOUT: {result.stdout}")
+            self.log(f"Docker Compose STDERR: {result.stderr}")
+            return False
+        return True
+
     def _do_install(self):
-        from utils import docker_manager, shortcut_creator, health_check
+        from utils import docker_manager, shortcut_creator
         from main import INSTALL_STATE_FILE
 
         try:
             data = self.app.install_data
-            install_dir = Path(data.get("install_dir", "."))
+            self.install_dir = Path(data.get("install_dir", "."))
             port = data.get("port", 18789)
             models = data.get("models", [])
             agents = data.get("agents", [])
@@ -82,9 +120,9 @@ class InstallScreen(ctk.CTkFrame):
 
             self.progress.set(0.1)
             # 2. Directories
-            self.log(f"Creating directory structure at {install_dir}...")
-            install_dir.mkdir(parents=True, exist_ok=True)
-            for d in ["workspace", "agents", "logs", "assets", ".openclaw"]: (install_dir / d).mkdir(exist_ok=True)
+            self.log(f"Creating directory structure at {self.install_dir}...")
+            self.install_dir.mkdir(parents=True, exist_ok=True)
+            for d in ["workspace", "agents", "logs", "assets", ".openclaw"]: (self.install_dir / d).mkdir(exist_ok=True)
             self.progress.set(0.2)
 
             # 3. Templates & Env
@@ -92,22 +130,22 @@ class InstallScreen(ctk.CTkFrame):
             template_dir = BASE_DIR / "templates"
             for f_name in ["docker-compose.yml", "launcher.pyw", "telegram_notifier.py"]:
                 if (template_dir / f_name).exists(): 
-                    shutil.copy(template_dir / f_name, install_dir / f_name)
+                    shutil.copy(template_dir / f_name, self.install_dir / f_name)
             
             # Write standardized .env
             env_content = f"""OPENCLAW_PORT={port}
 GATEWAY_TOKEN={gateway_token}
-INSTALL_DIR={install_dir}
+INSTALL_DIR={self.install_dir}
 OLLAMA_MODEL={models[0] if models else 'llama3.2:8b'}
 TELEGRAM_TOKEN={data.get('telegram_token', '')}
 TELEGRAM_CHAT_ID={data.get('telegram_chat_id', '')}
-WORKSPACE_BASE={install_dir / 'workspace'}
+WORKSPACE_BASE={self.install_dir / 'workspace'}
 OPENCLAW_IMAGE={OPENCLAW_IMAGE}
 OLLAMA_API_URL=http://127.0.0.1:11434/api
 DEFAULT_AGENT={agents[0] if agents else 'FullStack Dev'}
 DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
 """
-            with open(install_dir / ".env", "w") as f: f.write(env_content)
+            with open(self.install_dir / ".env", "w") as f: f.write(env_content)
             self.progress.set(0.4)
 
             # 4. Pull Image
@@ -119,15 +157,15 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
             # 5. Agent Profiles & Shortcut
             self.log("Finalizing installation...")
             if (template_dir / "agents").exists():
-                for af in (template_dir / "agents").glob("*.json"): shutil.copy(af, install_dir / "agents" / af.name)
+                for af in (template_dir / "agents").glob("*.json"): shutil.copy(af, self.install_dir / "agents" / af.name)
             
-            shortcut_creator.create_desktop_shortcut(str(install_dir / "launcher.pyw"), "OpenClaw")
+            shortcut_creator.create_desktop_shortcut(str(self.install_dir / "launcher.pyw"), "OpenClaw")
             self.progress.set(0.8)
 
             # 6. State
             state_data = {
                 "installed": True, 
-                "install_dir": str(install_dir), 
+                "install_dir": str(self.install_dir), 
                 "port": port,
                 "gateway_token": gateway_token
             }
@@ -135,10 +173,14 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
             self.progress.set(0.9)
 
             # 7. Start Containers
-            self.log("Starting OpenClaw container...")
-            subprocess.run(["docker", "compose", "up", "-d"], cwd=str(install_dir), check=True, capture_output=True)
-            self.progress.set(1.0)
+            # Validate files first
+            if not self.validate_compose_file(self.install_dir):
+                raise Exception("Compose file validation failed.")
 
+            if not self.start_container(self.install_dir):
+                raise Exception("Docker Compose up failed. See logs above.")
+
+            self.progress.set(1.0)
             self.log("Installation complete!")
             self.after(0, self.on_success)
 
@@ -181,7 +223,6 @@ DEFAULT_MODEL={models[0] if models else 'llama3.2:8b'}
             
             for i in range(12): # 60 seconds
                 try:
-                    # Use a simpler check if token is required (maybe token endpoint or just base)
                     response = requests.get(f"http://localhost:{port}", timeout=5)
                     if response.status_code < 500:
                         self.log(f"Dashboard is ready at {url}")
